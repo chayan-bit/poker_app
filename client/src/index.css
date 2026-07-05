@@ -1,0 +1,281 @@
+@import url("https://rsms.me/inter/inter.css");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   Design system: "modern card room at night".
+   Calm dark surfaces; cards and chips are the loudest objects.
+   Dark is the target; light is a supported alternate theme.
+   All colors are tokens so themes swap by class on <html>.
+   ============================================================ */
+
+:root,
+.dark {
+  /* Cool graphite surfaces, not flat black - gives depth room to breathe. */
+  --surface: #0c1013;
+  --surface-2: #12181d;
+  --surface-3: #1b232a;
+  --surface-4: #26313a;
+
+  /* Felt: a deep, slightly desaturated green with a lit center. */
+  --felt: #124b39;
+  --felt-hi: #17624a;
+  --felt-edge: #0a2c22;
+  --rail: #241b12; /* dark walnut rail, subtle - not skeuomorphic */
+  --rail-hi: #3a2c1d;
+
+  --ink: #eef3f6;
+  --ink-dim: #9fb0bd;
+  --ink-faint: #5f6f7b;
+  --line: #232e37;
+  --line-hi: rgba(255, 255, 255, 0.06);
+
+  --gold: #e8b44c;
+  --gold-hi: #f6cd74;
+  --action-blue: #4c9ae8;
+  --action-blue-hi: #74b4f2;
+  --danger: #e85c5c;
+  --success: #46c08a;
+
+  --card-face: #f8fafc;
+  --card-ink: #12171c;
+  --card-edge: rgba(0, 0, 0, 0.14);
+
+  /* Depth: three shadow tiers used consistently across the app. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 6px 18px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --glow-gold: 0 0 0 2px var(--gold), 0 0 26px 4px rgba(232, 180, 76, 0.5);
+  --glow-blue: 0 0 0 2px var(--action-blue), 0 0 18px 2px rgba(76, 154, 232, 0.4);
+
+  /* Motion contract: single ease-out-cubic, 150-250ms band. */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 150ms;
+  --dur: 200ms;
+  --dur-slow: 250ms;
+  --dur-pot: 400ms; /* pot-push payoff only */
+
+  color-scheme: dark;
+}
+
+.light {
+  --surface: #eef1f4;
+  --surface-2: #ffffff;
+  --surface-3: #e6ebef;
+  --surface-4: #d7dee4;
+
+  --felt: #12684d;
+  --felt-hi: #178a67;
+  --felt-edge: #0c4634;
+  --rail: #b9a184;
+  --rail-hi: #d3bfa4;
+
+  --ink: #101619;
+  --ink-dim: #45525c;
+  --ink-faint: #7c8994;
+  --line: #d3dae0;
+  --line-hi: rgba(0, 0, 0, 0.05);
+
+  --gold: #b5851f;
+  --gold-hi: #cf9d33;
+  --action-blue: #2f7fd6;
+  --action-blue-hi: #4a95e6;
+  --danger: #d23b3b;
+  --success: #189a68;
+
+  --card-face: #ffffff;
+  --card-ink: #12171c;
+  --card-edge: rgba(0, 0, 0, 0.1);
+
+  --shadow-1: 0 1px 2px rgba(20, 30, 40, 0.12);
+  --shadow-2: 0 6px 18px rgba(20, 30, 40, 0.14);
+  --shadow-3: 0 18px 48px rgba(20, 30, 40, 0.18);
+  --glow-gold: 0 0 0 2px var(--gold), 0 0 22px 4px rgba(181, 133, 31, 0.4);
+  --glow-blue: 0 0 0 2px var(--action-blue), 0 0 16px 2px rgba(47, 127, 214, 0.35);
+
+  color-scheme: light;
+}
+
+/* Reduced motion: collapse everything to short fades. The in-app toggle
+   adds .reduce-motion on <html> to force the same behavior on demand. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 80ms;
+    --dur: 80ms;
+    --dur-slow: 80ms;
+    --dur-pot: 80ms;
+  }
+}
+.reduce-motion {
+  --dur-fast: 80ms;
+  --dur: 80ms;
+  --dur-slow: 80ms;
+  --dur-pot: 80ms;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "cv05" 1, "ss03" 1; /* refined Inter glyphs */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
+}
+
+/* Every place a number appears, it must not jitter as it ticks. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "cv05" 1;
+}
+
+/* GPU compositing hint for scene-graph nodes that move via transform. */
+.gpu {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
+.no-tap-highlight {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Frosted glass used on HUD chrome that floats over the felt. */
+.glass {
+  background: rgba(10, 14, 18, 0.55);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid var(--line-hi);
+}
+
+/* Ambient room light behind the chrome screens - a lit felt above, a gold
+   ember below, a fine grain, and a vignette. This is what turns a flat
+   surface into a "card room at night" instead of an empty panel. */
+.ambient::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(80% 55% at 50% -8%, color-mix(in oklab, var(--felt-hi), transparent 68%), transparent 60%),
+    radial-gradient(60% 45% at 88% 108%, color-mix(in oklab, var(--gold), transparent 86%), transparent 60%),
+    radial-gradient(70% 50% at 8% 96%, color-mix(in oklab, var(--action-blue), transparent 90%), transparent 60%);
+}
+.ambient::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.04;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* A hairline gradient border for premium cards: a masked ring that catches
+   a bit of light at the top-left, dark at the bottom-right. */
+.card-edge {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 40%),
+    var(--surface-2);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  box-shadow: var(--shadow-2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.card-edge::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02) 45%, rgba(0, 0, 0, 0.3));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Gentle continuous float for the hero card fan (transform-only, GPU). */
+@keyframes hero-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.hero-float {
+  animation: hero-float 6s var(--ease) infinite;
+}
+.reduce-motion .hero-float { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .hero-float { animation: none; }
+}
+
+/* Subtle action-bar shake for the rare optimistic rollback. */
+@keyframes rollback-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(5px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+.rollback-shake {
+  animation: rollback-shake 220ms var(--ease);
+}
+.reduce-motion .rollback-shake {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rollback-shake {
+    animation: none;
+  }
+}
+
+/* Range input, styled once for both the bet slider and replayer scrubber. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-4);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--action-blue);
+  border: 3px solid var(--surface);
+  box-shadow: var(--shadow-2);
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--surface);
+  border-radius: 50%;
+  background: var(--action-blue);
+  cursor: pointer;
+}
