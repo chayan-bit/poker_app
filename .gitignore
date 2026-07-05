@@ -1,0 +1,24 @@
+# Go
+/bin/
+*.test
+*.out
+
+# Node / client (generated later)
+client/node_modules/
+client/dist/
+client/.vite/
+
+# Capacitor native shells
+client/ios/
+client/android/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

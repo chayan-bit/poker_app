@@ -37,7 +37,7 @@ The wedge nobody owns: **PokerStars-grade snappiness + Poker Now-grade frictionl
 ## Tech direction (summary)
 
 - **Client**: React + TypeScript + Vite, table rendered with GPU-friendly transforms, wrapped with Capacitor for iOS/Android.
-- **Server**: FastAPI + WebSockets, authoritative game engine, PostgreSQL for persistence, Redis for table state and pub/sub.
+- **Server**: Go + WebSockets, a single lightweight static binary with the authoritative game engine; goroutine-per-connection and sub-millisecond GC keep tail latency flat. PostgreSQL for persistence, Redis for cross-node table state and pub/sub. (Chosen over the original FastAPI sketch because the server sits in the latency hot path - see [server/README.md](server/README.md) for the rationale.)
 - **Realtime target**: sub-100 ms RTT via regional gateways, protocol messages under 1 KB.
 
 Rationale, alternatives considered, and the full design system live in [docs/Design_suite.md](docs/Design_suite.md).

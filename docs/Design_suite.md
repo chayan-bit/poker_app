@@ -24,7 +24,9 @@ Positioning: *the fast, fair, friendly poker app* - PokerStars-grade feel, Poker
 
 ## 3. Platform and stack decisions
 
-**Decision: web-first React + TypeScript + Vite client, wrapped with Capacitor for the app stores; FastAPI + WebSockets authoritative server.**
+**Decision: web-first React + TypeScript + Vite client, wrapped with Capacitor for the app stores; Go + WebSockets authoritative server (a single lightweight static binary).**
+
+Server-language note: the original sketch used Python/FastAPI, but the server sits directly in the latency hot path, so it was switched to Go. Go gives compiled per-message handling with no interpreter/GIL overhead, goroutine-per-connection concurrency (each table an isolated single-writer goroutine, so the pure engine needs no locks), sub-millisecond GC for flat tail latency, and one static binary that deploys cleanly to regional edge gateways for the sub-100 ms RTT target. The pure poker engine lives in its own `engine` package with no I/O so it stays exhaustively testable.
 
 Alternatives considered:
 

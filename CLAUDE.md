@@ -26,8 +26,8 @@ All product and design rationale lives in `docs/Design_suite.md`; read it before
 ## Stack
 
 - Client: React 19 + TypeScript + Vite + Tailwind; Capacitor wraps the same build for iOS/Android; Framer Motion only for non-table chrome, table animations are hand-rolled CSS transforms/WAAPI.
-- Server: Python 3.12 + FastAPI + WebSockets; PostgreSQL (accounts, hand history, economy); Redis (live table state, pub/sub, presence).
-- Shared protocol: JSON messages under 1 KB, versioned, defined once in `protocol/` and codegen'd to TS types + Pydantic models.
+- Server: Go 1.26 + WebSockets (coder/websocket); a single static binary, goroutine-per-connection, engine as a pure package; PostgreSQL (accounts, hand history, economy); Redis (live table state, pub/sub, presence). Chosen over FastAPI because the server is in the latency hot path.
+- Shared protocol: JSON messages under 1 KB, versioned, defined once in `server/internal/protocol/` (Go structs are the source of truth) and mirrored to client TS types.
 
 ## Testing expectations
 
@@ -38,7 +38,7 @@ All product and design rationale lives in `docs/Design_suite.md`; read it before
 
 ## Conventions specific to this repo
 
-- Monorepo layout (when scaffolded): `client/`, `server/`, `engine/` (pure logic, shared tests), `protocol/`, `docs/`.
+- Monorepo layout: `server/` (Go: `cmd/pokerd`, `internal/{engine,fair,protocol,table,ws,auth,economy}`), `client/` (design-tool-generated web client + Capacitor wrapper), `docs/`.
 - Chips are integers (smallest unit = 1 chip); never floats anywhere in money paths.
 - All randomness comes from the server CSPRNG via the seeded-shuffle module; `random`/`Math.random` are banned in game paths.
 - WebSocket messages: past-tense events from server (`hand_dealt`, `bet_placed`), imperative commands from client (`place_bet`).
