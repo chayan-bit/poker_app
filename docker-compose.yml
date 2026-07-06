@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pokerd
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pokerd}
+      POSTGRES_DB: pokerd
+    volumes:
+      - pokerd_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pokerd -d pokerd"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pokerd:
+    build:
+      context: ./server
+      dockerfile: ../Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      POKERD_ADDR: ":8080"
+      POKERD_DATABASE_URL: ${POKERD_DATABASE_URL}
+      POKERD_AUTH_SECRET: ${POKERD_AUTH_SECRET}
+      POKERD_ALLOWED_ORIGINS: ${POKERD_ALLOWED_ORIGINS}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pokerd_pgdata:
