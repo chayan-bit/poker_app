@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: pokerd
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pokerd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: pokerd
     volumes:
       - pokerd_pgdata:/var/lib/postgresql/data
@@ -13,22 +13,39 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    # Bound so one runaway container cannot starve the co-located pokerd/proxy
+    # on the documented single-VM deploy. Tune to the host.
+    mem_limit: 1g
+    cpus: 1.0
 
   pokerd:
     build:
       context: ./server
       dockerfile: ../Dockerfile
+      args:
+        VERSION: ${POKERD_VERSION:-dev}
     restart: unless-stopped
+    # Bound to loopback: pokerd speaks plaintext HTTP/WS and is meant to sit
+    # BEHIND a TLS-terminating reverse proxy (Caddy in docs/DEPLOY.md), never
+    # exposed directly to the internet. The proxy publishes 443 and forwards to
+    # 127.0.0.1:8080. For a proxy in another container, put both on a shared
+    # docker network and drop this ports mapping entirely.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       POKERD_ADDR: ":8080"
-      POKERD_DATABASE_URL: ${POKERD_DATABASE_URL}
-      POKERD_AUTH_SECRET: ${POKERD_AUTH_SECRET}
-      POKERD_ALLOWED_ORIGINS: ${POKERD_ALLOWED_ORIGINS}
+      # `:?` guards fail compose fast if a required secret is missing, instead
+      # of silently starting pokerd with in-memory stores and an ephemeral,
+      # restart-rotating auth secret that invalidates every issued token.
+      POKERD_ENV: production
+      POKERD_DATABASE_URL: ${POKERD_DATABASE_URL:?set POKERD_DATABASE_URL in .env}
+      POKERD_AUTH_SECRET: ${POKERD_AUTH_SECRET:?set POKERD_AUTH_SECRET in .env}
+      POKERD_ALLOWED_ORIGINS: ${POKERD_ALLOWED_ORIGINS:?set POKERD_ALLOWED_ORIGINS in .env}
     depends_on:
       postgres:
         condition: service_healthy
+    mem_limit: 512m
+    cpus: 1.0
 
 volumes:
   pokerd_pgdata:

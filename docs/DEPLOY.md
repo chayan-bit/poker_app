@@ -36,14 +36,21 @@ Check status with `docker compose ps` and logs with `docker compose logs -f poke
 
 ### 3. Build the client
 
+Build from the repo root with `make client-build`, NOT a bare `npm run build`:
+
 ```
-cd client
-npm install
-VITE_API_URL=https://poker.example.com VITE_WS_URL=wss://poker.example.com/ws npm run build
+VITE_API_URL=https://poker.example.com VITE_WS_URL=wss://poker.example.com/ws \
+	make client-build
 ```
 
-This produces a static build in `client/dist/`.
+`make client-build` runs `make wasm` first, then `npm ci && npm run build`.
+This matters: the offline "Play Nearby" mode loads `client/public/tablecore.wasm` at runtime, but that file is gitignored and only produced by `make wasm`.
+A fresh clone that runs a bare `npm run build` ships a bundle that 404s on `tablecore.wasm`, silently breaking offline mode.
+
+This produces a static build in `client/dist/` (including `tablecore.wasm` and `wasm_exec.js`).
 Copy `client/dist/` to the VM, for example to `/srv/poker-client`.
+
+`VITE_API_URL` and `VITE_WS_URL` are inlined at build time. If you omit them the web build falls back to same-origin, which works behind the Caddy recipe below. The packaged mobile builds (iOS/Android) MUST have them set, since there is no same-origin server inside the app shell - see `client/MOBILE.md`.
 
 ### 4. Terminate TLS and proxy with Caddy
 
@@ -86,23 +93,46 @@ Play a hand, restart the `pokerd` container with `docker compose restart pokerd`
 | `POKERD_ADDR` | pokerd | no | `:8080` | Listen address, for example `:8080` or `0.0.0.0:8080`. |
 | `POKERD_DATABASE_URL` | pokerd | no | unset | Postgres connection string, for example `postgres://user:pass@host:5432/dbname?sslmode=disable`. When unset, pokerd uses in-memory stores and logs a warning. |
 | `POKERD_AUTH_SECRET` | pokerd | recommended | random ephemeral value | HMAC secret used to sign auth tokens. When unset, pokerd generates a random secret at startup and logs a warning; every restart invalidates all existing sessions. Always set this in production. |
-| `POKERD_ALLOWED_ORIGINS` | pokerd | recommended | none (all origins rejected except empty-origin requests) | Comma-separated list of allowed WebSocket origins, for example `https://poker.example.com`. |
+| `POKERD_ENV` | pokerd | recommended | unset (dev) | Set to `production` to make missing `POKERD_DATABASE_URL` or `POKERD_AUTH_SECRET` a hard startup failure instead of a warning-plus-fallback. The compose stack sets this for you. |
+| `POKERD_ALLOWED_ORIGINS` | pokerd | recommended | localhost/127.0.0.1 dev origins only | Comma-separated list of allowed WebSocket origins, for example `https://poker.example.com`. When unset, pokerd allows only local development origins (`localhost:*` / `127.0.0.1:*`), NOT all origins - a remote client with an unset value is rejected. |
+| `POKERD_VERSION` | docker-compose build arg | no | `dev` | Stamped into the pokerd binary as `main.version` and reported by `GET /healthz`; set to a git tag/sha in CI so you can confirm which build is live. |
 | `POSTGRES_PASSWORD` | docker-compose (postgres service) | yes, if using compose's postgres service | none | Superuser password for the bundled Postgres container. Also used when constructing `POKERD_DATABASE_URL` in `.env`. |
 | `VITE_API_URL` | client build | no | same-origin | Base URL the client uses for HTTP API calls, for example `https://poker.example.com`. |
 | `VITE_WS_URL` | client build | no | derived from current origin | WebSocket URL the client connects to, for example `wss://poker.example.com/ws`. |
 
-## Warning semantics
+## Configuration safety semantics
 
-pokerd is designed to start even when optional configuration is missing, but it logs explicit warnings so operators are not surprised in production:
+In development (`POKERD_ENV` unset) pokerd starts even when optional configuration is missing, logging explicit warnings:
 
 - **Ephemeral auth secret**: if `POKERD_AUTH_SECRET` is not set, pokerd generates a random 32-byte secret at startup and logs `WARNING: POKERD_AUTH_SECRET not set; using a random ephemeral secret`.
   Every process restart invalidates all previously issued auth tokens, forcing every client to re-authenticate.
-  This is acceptable for local development, not for production.
-- **In-memory stores**: if `POKERD_DATABASE_URL` is not set, pokerd logs `WARNING: POKERD_DATABASE_URL not set; using in-memory stores` and keeps accounts, balances, and hand histories only in process memory.
-  All of that state is lost on every restart or crash.
-  This is acceptable for local development and demos, not for production deployments that need persistence.
+- **In-memory stores**: if `POKERD_DATABASE_URL` is not set, pokerd logs `WARNING: POKERD_DATABASE_URL not set; using in-memory stores` and keeps accounts, balances, and hand histories only in process memory, lost on every restart or crash.
 
-Treat both warnings as deployment checklist items: a production deployment should never see either warning in its logs.
+In production (`POKERD_ENV=production`) these are NOT warnings - pokerd refuses to start if `POKERD_DATABASE_URL` or `POKERD_AUTH_SECRET` is missing, so a typo in `.env` can never silently bring up a data-losing, token-rotating server.
+The compose stack sets `POKERD_ENV=production` and uses `:?` guards on the required variables, so `docker compose up` fails fast with a clear message rather than starting a misconfigured server.
+
+## Backups and restore
+
+The compose `postgres` service stores data in the named volume `pokerd_pgdata`. A named volume survives `docker compose down` but NOT `docker compose down -v`, and it is not a backup - a single disk failure or an accidental `-v` loses every account, balance, and hand history. Take regular logical backups:
+
+```
+# Nightly logical dump (run from the repo dir on the VM, e.g. via cron).
+docker compose exec -T postgres pg_dump -U pokerd -d pokerd --format=custom \
+	> "backups/pokerd-$(date +%F).dump"
+```
+
+Restore into a fresh database:
+
+```
+docker compose exec -T postgres pg_restore -U pokerd -d pokerd --clean --if-exists \
+	< backups/pokerd-YYYY-MM-DD.dump
+```
+
+Keep backups off the VM (object storage, another host) so a full-VM loss is recoverable, and periodically test a restore into a throwaway database - an untested backup is not a backup.
+
+## Health and versioning
+
+`GET /healthz` returns the liveness status and the running build version (stamped from the `POKERD_VERSION` build arg / `-X main.version` ldflag). The reverse proxy or orchestrator should probe it: the distroless container image has no shell or curl, so pokerd cannot self-probe via a Docker `HEALTHCHECK`; use the proxy's health check or an external uptime monitor hitting `/healthz` over TLS.
 
 ## Client static hosting notes
 

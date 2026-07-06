@@ -1,0 +1,14 @@
+# The build context is ./server (see docker-compose.yml). Keep it lean so
+# `COPY . .` does not bust the layer cache on unrelated changes and never
+# sweeps local artifacts into the image.
+**/*_test.go
+**/testdata/
+e2e/
+*.md
+.git/
+.github/
+bin/
+tablewasm
+*.wasm
+.env
+.env.*
