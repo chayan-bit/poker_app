@@ -3,17 +3,49 @@
 // (tabular) numbers for places and prizes - never floats, chips are integers
 // end to end. Routes back to the lobby on dismiss.
 
+import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useGame } from "@/store/gameStore";
 import { ordinal } from "./ordinal";
 
+/** TourneyPlace carries only a playerId; the wire has no display name on it.
+ *  We map it through the seat name map (the only name source the client holds).
+ *  When a finisher's seat is already gone (busted earlier, so no name is known)
+ *  we show a short humanized handle, never the raw opaque id.
+ *  SEAM: a proper fix would have the server include the display name on
+ *  TourneyPlace, or the client would keep a playerId->name cache across the
+ *  whole tournament rather than only the currently-seated players. */
+function humanizeId(id: string): string {
+  if (!id) return "Player";
+  if (id.length <= 12) return id;
+  return `Player ${id.slice(-4).toUpperCase()}`;
+}
+
 export function StandingsOverlay() {
   const result = useGame((s) => s.tourney.result);
+  const seats = useGame((s) => s.seats);
+  const lastElimination = useGame((s) => s.tourney.lastElimination);
   const disconnect = useGame((s) => s.disconnect);
   const clearResult = useGame((s) => s.clearTourneyResult);
   const nav = useNavigate();
 
+  // Build a best-effort playerId -> name map from every name source the client
+  // still holds at tournament end.
+  const nameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of seats) {
+      if (s.playerId && s.name?.trim()) m.set(s.playerId, s.name);
+    }
+    if (lastElimination?.playerId && lastElimination.name?.trim()) {
+      m.set(lastElimination.playerId, lastElimination.name);
+    }
+    return m;
+  }, [seats, lastElimination]);
+
   if (!result) return null;
+
+  const displayName = (playerId: string): string =>
+    nameById.get(playerId) ?? humanizeId(playerId);
 
   const toLobby = () => {
     clearResult();
@@ -63,7 +95,7 @@ export function StandingsOverlay() {
                     {p.place}
                   </span>
                   <span className="max-w-[9rem] truncate text-sm font-medium">
-                    {p.playerId}
+                    {displayName(p.playerId)}
                   </span>
                 </div>
                 <span

@@ -62,7 +62,7 @@ export function FriendRow({ friend, onRail, onRemoved }: Props) {
         <div className="flex gap-1.5">
           {friend.status.state === "table" && (
             <button
-              className="rounded-lg border border-line px-2.5 py-1 text-xs text-ink-dim disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-line px-3.5 text-xs text-ink-dim no-tap-highlight disabled:opacity-50"
               disabled={railPending}
               onClick={() => void rail()}
             >
@@ -70,7 +70,7 @@ export function FriendRow({ friend, onRail, onRemoved }: Props) {
             </button>
           )}
           <button
-            className="rounded-lg border border-line px-2.5 py-1 text-xs text-ink-faint disabled:opacity-50"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-line px-3.5 text-xs text-ink-faint no-tap-highlight disabled:opacity-50"
             disabled={removing}
             onClick={() => void remove()}
           >

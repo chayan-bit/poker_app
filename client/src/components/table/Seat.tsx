@@ -30,6 +30,15 @@ interface Props {
 
 const AVATAR = 58;
 
+// The name/stack plaque, the disconnected overlay, and the action chip-tags are
+// intentionally dark-glass surfaces in BOTH themes. The themeable ink tokens
+// (--ink / --ink-dim / --ink-faint) flip to near-black in light mode and vanish
+// against that dark glass, so these surfaces use explicit light-on-dark text
+// that does not depend on the flipping tokens.
+const GLASS_TEXT = "rgba(237,242,247,0.96)";
+const GLASS_TEXT_DIM = "rgba(237,242,247,0.72)";
+const GLASS_TEXT_FAINT = "rgba(237,242,247,0.55)";
+
 // Hand-drawn plug glyph (never a Unicode/emoji character - those render as
 // emoji on iOS, which is disallowed). Shown over a disconnected seat's avatar.
 function PlugGlyph({ size = 20 }: { size?: number }) {
@@ -129,7 +138,7 @@ function SeatImpl(p: Props) {
         {player.disconnected && (
           <span
             className="absolute inset-0 grid place-items-center rounded-full"
-            style={{ background: "rgba(10,14,18,0.55)", color: "var(--ink-dim)" }}
+            style={{ background: "rgba(10,14,18,0.55)", color: GLASS_TEXT_DIM }}
             aria-label="Disconnected"
           >
             <PlugGlyph size={22} />
@@ -142,10 +151,16 @@ function SeatImpl(p: Props) {
         className="mt-1.5 flex min-w-[92px] flex-col items-center rounded-lg px-2 py-1"
         style={{ background: "rgba(10,14,18,0.6)", border: "1px solid var(--line-hi)" }}
       >
-        <div className="max-w-[88px] truncate text-xs font-medium text-ink">
+        <div
+          className="max-w-[88px] truncate text-xs font-medium"
+          style={{ color: GLASS_TEXT }}
+        >
           {p.isHero ? "You" : player.name}
         </div>
-        <div className="num text-sm font-semibold" style={{ color: p.isActive ? "var(--action-blue-hi)" : "var(--ink-dim)" }}>
+        <div
+          className="num text-sm font-semibold"
+          style={{ color: p.isActive ? "var(--action-blue-hi)" : GLASS_TEXT_DIM }}
+        >
           {formatAmount(player.stack, p.bb, showInBB)}
         </div>
       </div>
@@ -153,7 +168,7 @@ function SeatImpl(p: Props) {
       {player.sittingOut && (
         <div
           className="mt-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-          style={{ background: "rgba(0,0,0,0.45)", color: "var(--ink-faint)" }}
+          style={{ background: "rgba(0,0,0,0.45)", color: GLASS_TEXT_FAINT }}
         >
           Sitting out
         </div>
@@ -165,7 +180,7 @@ function SeatImpl(p: Props) {
           className="num mt-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
           style={{
             background: "rgba(0,0,0,0.45)",
-            color: player.lastAction.kind === "fold" ? "var(--danger)" : "var(--ink-dim)",
+            color: player.lastAction.kind === "fold" ? "var(--danger)" : GLASS_TEXT_DIM,
           }}
         >
           {actionText(player.lastAction.kind, player.lastAction.amount, p.bb, showInBB)}

@@ -20,6 +20,7 @@
 
 import {
   Cmd,
+  Ev,
   PROTOCOL_VERSION,
   type Command,
   type Envelope,
@@ -27,6 +28,20 @@ import {
 } from "./protocol";
 
 export type ConnStatus = "connecting" | "open" | "reconnecting" | "closed";
+
+/** WebSocket close codes that are TERMINAL: reconnecting would just loop (auth
+ *  rejected / token expired) or is pointless (server refused the protocol). Each
+ *  maps to a synthetic error event so the UI can surface a clear, actionable
+ *  state instead of an endless "reconnecting..." banner. Codes in the 4000-4999
+ *  range are application-defined; 1008 is the standard policy-violation code the
+ *  server uses to reject a bad/expired handshake. */
+const TERMINAL_CLOSE: ReadonlyMap<number, { code: string; message: string }> =
+  new Map([
+    [1008, { code: "auth_rejected", message: "Your session was rejected. Please sign in again." }],
+    [4001, { code: "auth_rejected", message: "Your session expired. Please sign in again." }],
+    [4002, { code: "protocol_version", message: "This app version is out of date. Please refresh to continue." }],
+    [4403, { code: "auth_rejected", message: "You are not allowed at this table." }],
+  ]);
 
 export interface NetTransport {
   send(cmd: Command): void;
@@ -65,6 +80,8 @@ export class WsClient implements NetTransport {
   private lastSeq = 0;
   private attempt = 0;
   private closedByUser = false;
+  /** Set once a terminal close/protocol mismatch is seen: no more reconnects. */
+  private terminal = false;
   private queue: Command[] = [];
   private tableId: string | undefined;
 
@@ -78,6 +95,7 @@ export class WsClient implements NetTransport {
 
   connect(): void {
     this.closedByUser = false;
+    this.terminal = false;
     this.open();
   }
 
@@ -115,9 +133,16 @@ export class WsClient implements NetTransport {
 
     ws.onmessage = (msg) => this.handleFrame(msg.data);
 
-    ws.onclose = () => {
-      if (this.closedByUser) {
+    ws.onclose = (event) => {
+      if (this.closedByUser || this.terminal) {
         this.handlers.onStatus("closed");
+        return;
+      }
+      // A terminal close (auth rejected / protocol refused) must stop the
+      // reconnect loop and surface a clear state, not retry forever.
+      const terminal = TERMINAL_CLOSE.get(event.code);
+      if (terminal) {
+        this.surfaceTerminal(terminal.code, terminal.message);
         return;
       }
       this.scheduleReconnect();
@@ -126,6 +151,24 @@ export class WsClient implements NetTransport {
     ws.onerror = () => {
       // onclose will follow; nothing to do here.
     };
+  }
+
+  /** Stops the client permanently and surfaces a synthetic error event so the
+   *  store/UI can show an actionable "sign in again" / "please refresh" state.
+   *  Reuses the normal dispatch path (onEvent + onStatus) so nothing downstream
+   *  needs a special case. */
+  private surfaceTerminal(code: string, message: string): void {
+    if (this.terminal) return;
+    this.terminal = true;
+    // Guard any already-scheduled reconnect timer from reopening the socket.
+    this.closedByUser = true;
+    this.handlers.onEvent({
+      type: Ev.Error,
+      data: { code, message },
+    } as ServerEvent);
+    this.handlers.onStatus("closed");
+    this.ws?.close();
+    this.ws = null;
   }
 
   /** Lets the store tell the client which table to rejoin/resync on reopen. */
@@ -150,7 +193,16 @@ export class WsClient implements NetTransport {
     } catch {
       return; // ignore malformed frames rather than crash the UI
     }
-    if (env.v !== PROTOCOL_VERSION) return;
+    if (env.v !== PROTOCOL_VERSION) {
+      // The server bumped the wire protocol under us. Silently dropping these
+      // frames freezes the table with no explanation; instead surface a
+      // terminal "please refresh" state once and stop.
+      this.surfaceTerminal(
+        "protocol_version",
+        "This app version is out of date. Please refresh to continue.",
+      );
+      return;
+    }
 
     const ev = { type: env.type, seq: env.seq, data: env.data } as ServerEvent;
 

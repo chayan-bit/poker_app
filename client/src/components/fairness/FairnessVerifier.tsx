@@ -34,12 +34,12 @@ export default function FairnessVerifier() {
       <Card>
         <p className="text-sm leading-relaxed text-ink-dim">
           Before each hand the server publishes a{" "}
-          <strong className="text-ink">commitment</strong> — the SHA-256 hash of
+          <strong className="text-ink">commitment</strong> - the SHA-256 hash of
           a secret shuffle seed. It can't change the deck after seeing anyone's
           cards without breaking that hash. After the hand it{" "}
           <strong className="text-ink">reveals the seed</strong>. Anyone can hash
           the seed and check it matches the commitment. That check runs here, in
-          your browser — nothing is sent anywhere.
+          your browser - nothing is sent anywhere.
         </p>
       </Card>
 
@@ -94,7 +94,7 @@ export default function FairnessVerifier() {
               }}
             >
               <p className="font-semibold">
-                {result.ok ? "Verified — the deck was committed before the deal." : "Mismatch — this seed does not match the commitment."}
+                {result.ok ? "Verified - the deck was committed before the deal." : "Mismatch - this seed does not match the commitment."}
               </p>
               <p className="mono mt-1 break-all text-xs opacity-80">
                 SHA-256(seed) = {result.computed}

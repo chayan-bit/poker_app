@@ -14,10 +14,13 @@ export function Screen({
   return (
     <div className="ambient relative min-h-full w-full overflow-x-hidden">
       <div
-        className={`relative z-10 mx-auto flex min-h-full w-full flex-col gap-5 px-5 ${wide ? "max-w-5xl" : "max-w-xl"}`}
+        className={`relative z-10 mx-auto flex min-h-full w-full flex-col gap-5 ${wide ? "max-w-5xl" : "max-w-xl"}`}
         style={{
           paddingTop: "max(1.5rem, env(safe-area-inset-top))",
           paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))",
+          // Clear the notch/rounded corners in landscape too, not just top/bottom.
+          paddingLeft: "max(1.25rem, env(safe-area-inset-left))",
+          paddingRight: "max(1.25rem, env(safe-area-inset-right))",
         }}
       >
         {(title || back) && (

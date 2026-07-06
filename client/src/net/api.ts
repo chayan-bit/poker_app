@@ -2,23 +2,47 @@
 // mirror the shapes in server/internal/auth/handlers.go and
 // server/internal/lobby/handlers.go exactly. No `any`.
 
+import { Capacitor } from "@capacitor/core";
 import { isOfflineMode } from "./mode";
 
 const DEFAULT_API_URL = "http://localhost:8080";
 
 function apiBase(): string {
   const fromEnv = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
-  return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_API_URL;
+  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  // A packaged native build cannot reach the dev machine's localhost, so a
+  // silent localhost fallback there ships a dead store binary. Fail loudly at
+  // the first call instead - VITE_API_URL MUST be set at build time (MOBILE.md).
+  if (Capacitor.isNativePlatform()) {
+    throw new ApiError(
+      0,
+      "misconfigured_api_url",
+      "This build has no server configured (VITE_API_URL was unset at build time). Rebuild with VITE_API_URL and VITE_WS_URL set to your live HTTPS/WSS origin.",
+    );
+  }
+  // Web dev only: default to the local server.
+  return DEFAULT_API_URL;
 }
 
 export const AUTH_TOKEN_KEY = "poker.authToken";
 
+/** localStorage can throw SecurityError in storage-blocked WebViews / older
+ *  Safari private mode. Reads degrade to null, writes to a no-op - never crash
+ *  the app over a token that is only a convenience for session persistence. */
 export function getStoredToken(): string | null {
-  return window.localStorage.getItem(AUTH_TOKEN_KEY);
+  try {
+    return window.localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
 }
 
 function storeToken(token: string): void {
-  window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+  try {
+    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } catch {
+    // Storage unavailable: skip persistence; the in-memory session still works.
+  }
 }
 
 /** Standard lobby error envelope: {"error":{"code","message"}}. */
