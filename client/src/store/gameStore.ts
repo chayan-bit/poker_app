@@ -8,7 +8,12 @@
 // doesn't re-render on every field change.
 
 import { create } from "zustand";
-import { WsClient, type ConnStatus, type NetTransport } from "@/net/client";
+import {
+  WsClient,
+  type ConnStatus,
+  type NetHandlers,
+  type NetTransport,
+} from "@/net/client";
 import { MockServer } from "@/net/mockServer";
 import { verifyCommitment } from "@/lib/sha";
 import {
@@ -140,6 +145,10 @@ interface GameState {
 
   // ---- actions ----
   connect: (opts: { url?: string; mock?: boolean; token?: string }) => void;
+  /** Offline (nearby) entry point. `build` receives the same event/status sink
+   *  the WS client uses and returns a NetTransport that routes commands into the
+   *  mesh, so the store's dispatch path is byte-identical to the online one. */
+  connectLocal: (build: (handlers: NetHandlers) => NetTransport) => void;
   disconnect: () => void;
   act: (kind: BetKind, amount: number) => void;
   fold: () => void;
@@ -483,6 +492,13 @@ export const useGame = create<GameState>((set, get) => {
         set({ transport: client, usingMock: false });
         client.connect();
       }
+    },
+
+    connectLocal: (build) => {
+      get().transport?.close();
+      clearPendingTimer();
+      const transport = build(handlers);
+      set({ transport, usingMock: false });
     },
 
     disconnect: () => {

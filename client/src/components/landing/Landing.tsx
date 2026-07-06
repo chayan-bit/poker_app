@@ -125,16 +125,27 @@ export default function Landing() {
 
           <motion.p className="max-w-md text-lg leading-relaxed text-ink-dim" {...rise(0.16)}>
             A calm room where every tap lands before the server even answers.
-            Deal a private table from a single link, or sit down in seconds.
+            Play online with the world, or start your own game with friends in the
+            same room - no server, no sign-in.
           </motion.p>
 
-          <motion.div className="flex w-full max-w-md flex-col gap-3 sm:flex-row" {...rise(0.24)}>
-            <Button variant="gold" className="flex-1" onClick={() => nav("/table")}>
-              Play a demo hand
-            </Button>
-            <Button variant="ghost" className="flex-1" onClick={() => nav("/lobby")}>
-              Browse tables
-            </Button>
+          <motion.div className="grid w-full max-w-md gap-3 sm:grid-cols-2" {...rise(0.24)}>
+            <PlayOption
+              title="Play online"
+              body="Public tables, quick seat, and private rooms with friends."
+              cta="Play a demo hand"
+              variant="gold"
+              onCta={() => nav("/table")}
+              onSecondary={() => nav("/lobby")}
+              secondary="Browse tables"
+            />
+            <PlayOption
+              title="Play with friends offline"
+              body="Start your own network in the room. Invite by code. Never touches the server."
+              cta="Start a nearby game"
+              variant="primary"
+              onCta={() => nav("/nearby")}
+            />
           </motion.div>
 
           <motion.div className="mt-2 flex flex-wrap gap-x-6 gap-y-3 text-sm text-ink-dim" {...rise(0.32)}>
@@ -158,6 +169,46 @@ export default function Landing() {
         </div>
       </div>
     </Screen>
+  );
+}
+
+function PlayOption({
+  title,
+  body,
+  cta,
+  variant,
+  onCta,
+  secondary,
+  onSecondary,
+}: {
+  title: string;
+  body: string;
+  cta: string;
+  variant: "gold" | "primary";
+  onCta: () => void;
+  secondary?: string;
+  onSecondary?: () => void;
+}) {
+  return (
+    <div className="card-edge flex flex-col gap-3 rounded-2xl p-4">
+      <div className="flex flex-col gap-1">
+        <h2 className="display text-lg leading-tight">{title}</h2>
+        <p className="text-sm leading-snug text-ink-dim">{body}</p>
+      </div>
+      <div className="mt-auto flex flex-col gap-2">
+        <Button variant={variant} onClick={onCta}>
+          {cta}
+        </Button>
+        {secondary && onSecondary && (
+          <button
+            className="text-sm text-ink-faint underline-offset-4 transition-colors hover:text-ink-dim hover:underline"
+            onClick={onSecondary}
+          >
+            {secondary}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

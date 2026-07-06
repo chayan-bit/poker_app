@@ -2,6 +2,8 @@
 // mirror the shapes in server/internal/auth/handlers.go and
 // server/internal/lobby/handlers.go exactly. No `any`.
 
+import { isOfflineMode } from "./mode";
+
 const DEFAULT_API_URL = "http://localhost:8080";
 
 function apiBase(): string {
@@ -40,6 +42,14 @@ async function request<T>(
   init: RequestInit = {},
   opts: { auth?: boolean } = {},
 ): Promise<T> {
+  // Offline (nearby) mode is fully peer-to-peer: a cloud call here is a bug.
+  // Throw loudly in dev so it is caught at the source; in prod, fail the call
+  // rather than leak an offline session to the server.
+  if (isOfflineMode()) {
+    const detail = `blocked cloud call to ${path} while in offline nearby mode`;
+    if (import.meta.env.DEV) throw new Error(`api: ${detail}`);
+    return Promise.reject(new ApiError(0, "offline_mode", detail));
+  }
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   if (opts.auth !== false) {

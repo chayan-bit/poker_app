@@ -16,6 +16,7 @@ const FairnessVerifier = lazy(
 );
 const FriendsScreen = lazy(() => import("@/components/friends/FriendsScreen"));
 const HistoryScreen = lazy(() => import("@/components/history/HistoryScreen"));
+const Nearby = lazy(() => import("@/components/nearby/Nearby"));
 
 function Loading() {
   return (
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="/t/:joinCode" element={<Landing />} />
           <Route path="/table" element={<TablePage />} />
           <Route path="/lobby" element={<Lobby />} />
+          <Route path="/nearby" element={<Nearby />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/replay" element={<HandReplayer />} />
