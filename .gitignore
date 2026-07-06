@@ -25,3 +25,6 @@ client/*.tsbuildinfo
 # Generated WASM artifacts (built via `make wasm`, not committed as binaries)
 client/public/tablecore.wasm
 client/public/wasm_exec.js
+
+# test coverage output
+client/coverage/
