@@ -115,6 +115,19 @@ export default function Lobby() {
             5,240
           </span>
           <button
+            onClick={() => nav("/friends")}
+            className="grid h-9 w-9 place-items-center rounded-xl text-ink-dim no-tap-highlight"
+            style={{ background: "var(--surface-3)", boxShadow: "inset 0 0 0 1px var(--line-hi)" }}
+            aria-label="Friends"
+          >
+            <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+              <circle cx={9} cy={8} r={3.2} />
+              <path d="M3.5 19c.6-3.1 2.8-4.8 5.5-4.8s4.9 1.7 5.5 4.8" />
+              <circle cx={16.8} cy={9.2} r={2.5} />
+              <path d="M15.4 14.6c2.3.2 4.2 1.7 4.9 4.2" />
+            </svg>
+          </button>
+          <button
             onClick={() => nav("/settings")}
             className="grid h-9 w-9 place-items-center rounded-xl text-ink-dim no-tap-highlight"
             style={{ background: "var(--surface-3)", boxShadow: "inset 0 0 0 1px var(--line-hi)" }}

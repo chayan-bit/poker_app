@@ -14,6 +14,7 @@ const HandReplayer = lazy(() => import("@/components/replay/HandReplayer"));
 const FairnessVerifier = lazy(
   () => import("@/components/fairness/FairnessVerifier"),
 );
+const FriendsScreen = lazy(() => import("@/components/friends/FriendsScreen"));
 
 function Loading() {
   return (
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/replay" element={<HandReplayer />} />
           <Route path="/fair" element={<FairnessVerifier />} />
+          <Route path="/friends" element={<FriendsScreen />} />
         </Routes>
       </Suspense>
     </BrowserRouter>
