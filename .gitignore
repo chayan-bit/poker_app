@@ -22,3 +22,7 @@ client/android/
 *.swp
 .idea/
 .vscode/
+
+# Generated WASM artifacts (built via `make wasm`, not committed as binaries)
+client/public/tablecore.wasm
+client/public/wasm_exec.js
