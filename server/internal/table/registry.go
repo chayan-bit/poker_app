@@ -4,20 +4,31 @@ import "sync"
 
 // Registry holds all live tables and indexes private rooms by join code.
 // Safe for concurrent access from many connection goroutines.
+//
+// Deps is the dependency set handed to every table it creates. A zero-value
+// Registry (from NewRegistry) leaves Deps zero; New fills production defaults,
+// so tables still run. Wire real deps by setting Registry.Deps after
+// construction (the lobby does this).
 type Registry struct {
 	mu     sync.RWMutex
 	byID   map[string]*Table
 	byCode map[string]*Table
+	Deps   Deps
 }
 
-// NewRegistry constructs an empty registry.
+// NewRegistry constructs an empty registry with default (zero) deps.
 func NewRegistry() *Registry {
 	return &Registry{byID: map[string]*Table{}, byCode: map[string]*Table{}}
 }
 
-// Create registers and starts a new table.
+// NewRegistryWithDeps constructs a registry whose tables receive deps.
+func NewRegistryWithDeps(deps Deps) *Registry {
+	return &Registry{byID: map[string]*Table{}, byCode: map[string]*Table{}, Deps: deps}
+}
+
+// Create registers and starts a new table using the registry's deps.
 func (r *Registry) Create(cfg Config) *Table {
-	t := New(cfg)
+	t := New(cfg, r.Deps)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.byID[cfg.ID] = t
