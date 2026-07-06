@@ -114,19 +114,34 @@ interface BtnProps {
 }
 
 function ActionButton({ label, hint, onClick, tone, disabled, grow }: BtnProps) {
-  const bg =
+  // One loud action per bar: Raise carries the blue; Fold is deliberately the
+  // quietest (red text on a muted plate, never a red slab); Check/Call neutral.
+  const style =
     tone === "primary"
-      ? "linear-gradient(180deg, var(--action-blue-hi), var(--action-blue))"
+      ? {
+          background: "var(--action-blue)",
+          color: "#04121f",
+          boxShadow:
+            "var(--shadow-2), inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -1px 0 rgba(0,0,0,0.2)",
+        }
       : tone === "danger"
-        ? "linear-gradient(180deg, #f07575, var(--danger))"
-        : "var(--surface-3)";
-  const color = tone === "neutral" ? "var(--ink)" : "#05121f";
+        ? {
+            background: "var(--surface-3)",
+            color: "var(--danger)",
+            boxShadow: "var(--shadow-1), inset 0 0 0 1px var(--line-hi)",
+          }
+        : {
+            background: "var(--surface-4)",
+            color: "var(--ink)",
+            boxShadow:
+              "var(--shadow-1), inset 0 1px 0 rgba(255,255,255,0.09), inset 0 0 0 1px var(--line-hi)",
+          };
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       className={`no-tap-highlight relative min-h-[58px] rounded-2xl text-base font-bold tracking-tight transition-transform active:translate-y-[2px] disabled:opacity-60 ${grow ? "flex-[1.4]" : "flex-1"}`}
-      style={{ background: bg, color, boxShadow: "var(--shadow-2)" }}
+      style={style}
     >
       {label}
       <span className="absolute right-2.5 top-2 hidden text-[10px] font-medium opacity-45 sm:inline">

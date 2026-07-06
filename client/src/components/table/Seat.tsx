@@ -87,7 +87,13 @@ function SeatImpl(p: Props) {
             border: "2px solid rgba(255,255,255,0.12)",
           }}
         >
-          {p.isHero ? "★" : initials(player.name)}
+          {p.isHero ? (
+            <svg width={22} height={22} viewBox="0 0 24 24" fill="currentColor" aria-label="You">
+              <path d="M12 2.6l2.6 5.9 6.4.6-4.8 4.3 1.4 6.3L12 16.4l-5.6 3.3 1.4-6.3L3 9.1l6.4-.6L12 2.6Z" />
+            </svg>
+          ) : (
+            initials(player.name)
+          )}
         </div>
         {p.isButton && (
           <span

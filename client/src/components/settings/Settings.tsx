@@ -97,7 +97,7 @@ function Back() {
       className="grid h-9 w-9 place-items-center rounded-lg border border-line text-ink-dim"
       aria-label="Back"
     >
-      ←
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M15 5l-7 7 7 7" /></svg>
     </button>
   );
 }
