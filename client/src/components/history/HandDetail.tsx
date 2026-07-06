@@ -19,7 +19,8 @@ import { Card as PlayingCard } from "@/components/table/Card";
 import { formatChips } from "@/lib/format";
 import { fetchHand, fetchHandText, type ApiHandRecord } from "@/net/hands";
 import { ApiError } from "@/net/api";
-import { mapToHoleCards } from "./mapRecord";
+import { mapToHoleCards, mapToHandRecord } from "./mapRecord";
+import { useGame } from "@/store/gameStore";
 
 export function HandDetail({
   handId,
@@ -29,6 +30,7 @@ export function HandDetail({
   onClose: () => void;
 }) {
   const nav = useNavigate();
+  const loadReplayHand = useGame((s) => s.loadReplayHand);
   const [record, setRecord] = useState<ApiHandRecord | null>(null);
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -132,6 +134,15 @@ export function HandDetail({
             </Button>
             <Button variant="ghost" onClick={verify}>
               Verify this hand
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                loadReplayHand(mapToHandRecord(record));
+                nav("/replay");
+              }}
+            >
+              Replay
             </Button>
           </div>
 
