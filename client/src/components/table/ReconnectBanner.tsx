@@ -9,7 +9,7 @@ function ReconnectBannerImpl() {
   if (status === "open" || status === "closed") return null;
 
   const text =
-    status === "connecting" ? "Connecting…" : "Reconnecting — resuming your seat…";
+    status === "connecting" ? "Connecting..." : "Reconnecting - resuming your seat...";
 
   return (
     <div

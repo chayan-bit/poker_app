@@ -70,6 +70,7 @@ interface GameState {
   yourHole: Card[];
   nextToAct: number;
   actByMs: number | null;
+  handRunning: boolean;
 
   // ---- optimistic layer ----
   pending: PendingAction | null;
@@ -86,6 +87,10 @@ interface GameState {
   // ---- table status (waiting-for-host / seated-count banner) ----
   tableStatus: { waitingForHost: boolean; seatedCount: number } | null;
 
+  // ---- rebuy sheet state ----
+  rebuyPending: boolean;
+  rebuyError: string | null;
+
   // ---- actions ----
   connect: (opts: { url?: string; mock?: boolean; token?: string }) => void;
   disconnect: () => void;
@@ -96,6 +101,11 @@ interface GameState {
   bet: (amount: number) => void;
   raise: (amount: number) => void;
   clearError: () => void;
+  startHand: () => void;
+  rebuy: (amount: number) => void;
+  clearRebuyError: () => void;
+  sitOut: () => void;
+  sitIn: () => void;
 
   // ---- fairness selectors ----
   getFairnessRecord: (handId: string) => FairnessRecord | undefined;
@@ -116,6 +126,7 @@ const EMPTY_TABLE = {
   yourHole: [] as Card[],
   nextToAct: -1,
   actByMs: null as number | null,
+  handRunning: false,
 };
 
 export const useGame = create<GameState>((set, get) => {
@@ -136,6 +147,7 @@ export const useGame = create<GameState>((set, get) => {
           street: "preflop",
           board: [],
           pending: null,
+          handRunning: true,
         });
         break;
       }
@@ -182,17 +194,29 @@ export const useGame = create<GameState>((set, get) => {
             const r = d.results.find((x) => x.seat === seat.seat);
             return r ? { ...seat, stack: seat.stack + r.won } : seat;
           });
-          return { seats, board: d.board, street: "showdown", nextToAct: -1 };
+          return {
+            seats,
+            board: d.board,
+            street: "showdown",
+            nextToAct: -1,
+            handRunning: false,
+          };
         });
         break;
       }
       case Ev.SeatUpdate: {
         const d = ev.data;
-        set((s) => ({
-          seats: s.seats.some((x) => x.seat === d.seat.seat)
-            ? s.seats.map((x) => (x.seat === d.seat.seat ? d.seat : x))
-            : [...s.seats, d.seat].sort((a, b) => a.seat - b.seat),
-        }));
+        // Server broadcasts the FULL seat list every time (not a per-seat
+        // delta), so the local list is simply replaced, sorted by seat.
+        set((s) => {
+          const seats = [...d.seats].sort((a, b) => a.seat - b.seat);
+          const rebuySettled = s.rebuyPending;
+          return {
+            seats,
+            rebuyPending: rebuySettled ? false : s.rebuyPending,
+            rebuyError: rebuySettled ? null : s.rebuyError,
+          };
+        });
         break;
       }
       case Ev.FairReveal: {
@@ -233,12 +257,19 @@ export const useGame = create<GameState>((set, get) => {
       }
       case Ev.Error: {
         const d = ev.data;
-        // An error on our own pending action is a rollback: undo + shake.
-        set((s) => ({
-          lastError: d,
-          pending: null,
-          rollbackNonce: s.pending ? s.rollbackNonce + 1 : s.rollbackNonce,
-        }));
+        set((s) => {
+          // A rebuy error is surfaced inline inside the rebuy sheet, never as
+          // a rollback/shake on the felt (the sheet isn't a betting preview).
+          if (s.rebuyPending) {
+            return { rebuyPending: false, rebuyError: d.message };
+          }
+          // An error on our own pending action is a rollback: undo + shake.
+          return {
+            lastError: d,
+            pending: null,
+            rollbackNonce: s.pending ? s.rollbackNonce + 1 : s.rollbackNonce,
+          };
+        });
         break;
       }
     }
@@ -259,6 +290,7 @@ export const useGame = create<GameState>((set, get) => {
       yourHole: d.yourHole,
       nextToAct: d.nextToAct,
       actByMs: d.actByMs ?? null,
+      handRunning: d.handRunning,
       // A snapshot is ground truth: any optimistic preview is superseded.
       pending: null,
     });
@@ -335,6 +367,8 @@ export const useGame = create<GameState>((set, get) => {
     reveals: {},
     fairness: [],
     tableStatus: null,
+    rebuyPending: false,
+    rebuyError: null,
 
     connect: ({ url, mock, token }) => {
       get().transport?.close();
@@ -356,7 +390,13 @@ export const useGame = create<GameState>((set, get) => {
     disconnect: () => {
       get().transport?.close();
       clearPendingTimer();
-      set({ transport: null, status: "closed", ...EMPTY_TABLE });
+      set({
+        transport: null,
+        status: "closed",
+        ...EMPTY_TABLE,
+        rebuyPending: false,
+        rebuyError: null,
+      });
     },
 
     act: (kind, amount) => {
@@ -412,6 +452,33 @@ export const useGame = create<GameState>((set, get) => {
     raise: (amount) => get().act("raise", amount),
 
     clearError: () => set({ lastError: null }),
+
+    startHand: () => {
+      const { transport, tableId } = get();
+      if (!transport || !tableId) return;
+      transport.send({ type: Cmd.StartHand, data: { tableId } });
+    },
+
+    rebuy: (amount) => {
+      const { transport, tableId } = get();
+      if (!transport || !tableId || amount <= 0) return;
+      set({ rebuyPending: true, rebuyError: null });
+      transport.send({ type: Cmd.Rebuy, data: { tableId, amount } });
+    },
+
+    clearRebuyError: () => set({ rebuyError: null }),
+
+    sitOut: () => {
+      const { transport, tableId } = get();
+      if (!transport || !tableId) return;
+      transport.send({ type: Cmd.SitOut, data: { tableId } });
+    },
+
+    sitIn: () => {
+      const { transport, tableId } = get();
+      if (!transport || !tableId) return;
+      transport.send({ type: Cmd.SitIn, data: { tableId } });
+    },
 
     getFairnessRecord: (handId) =>
       get().fairness.find((f) => f.handId === handId),

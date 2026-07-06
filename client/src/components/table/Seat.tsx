@@ -30,6 +30,28 @@ interface Props {
 
 const AVATAR = 58;
 
+// Hand-drawn plug glyph (never a Unicode/emoji character - those render as
+// emoji on iOS, which is disallowed). Shown over a disconnected seat's avatar.
+function PlugGlyph({ size = 20 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M8 3v5M16 3v5M6 8h12v3a6 6 0 0 1-12 0V8Z" />
+      <path d="M12 17v4" />
+      <path d="M4 21l16-16" />
+    </svg>
+  );
+}
+
 function actionText(kind: BetKind, amount: number, bb: number, inBB: boolean): string {
   if (kind === "fold") return "Fold";
   if (kind === "check") return "Check";
@@ -42,6 +64,7 @@ function SeatImpl(p: Props) {
   const tb = useTimebank(p.isActive ? p.actByMs : null);
   const { player } = p;
   const bet = player.lastAction && player.lastAction.kind !== "fold" && player.lastAction.kind !== "check";
+  const dimmed = player.sittingOut || player.disconnected;
 
   return (
     <div
@@ -49,7 +72,7 @@ function SeatImpl(p: Props) {
       style={{
         transform: `translate(${p.x}px, ${p.y}px) translate(-50%, -50%)`,
         transition: "transform var(--dur-slow) var(--ease)",
-        opacity: p.folded ? 0.5 : 1,
+        opacity: p.folded ? 0.5 : dimmed ? 0.45 : 1,
       }}
       data-seat={player.seat}
     >
@@ -103,6 +126,15 @@ function SeatImpl(p: Props) {
             D
           </span>
         )}
+        {player.disconnected && (
+          <span
+            className="absolute inset-0 grid place-items-center rounded-full"
+            style={{ background: "rgba(10,14,18,0.55)", color: "var(--ink-dim)" }}
+            aria-label="Disconnected"
+          >
+            <PlugGlyph size={22} />
+          </span>
+        )}
       </div>
 
       {/* name + stack plaque */}
@@ -118,8 +150,17 @@ function SeatImpl(p: Props) {
         </div>
       </div>
 
+      {player.sittingOut && (
+        <div
+          className="mt-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+          style={{ background: "rgba(0,0,0,0.45)", color: "var(--ink-faint)" }}
+        >
+          Sitting out
+        </div>
+      )}
+
       {/* fold/check chip-tag (non-bet actions) */}
-      {player.lastAction && !bet && (
+      {!player.sittingOut && player.lastAction && !bet && (
         <div
           className="num mt-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
           style={{

@@ -15,6 +15,9 @@ import { Board } from "./Board";
 import { Pot } from "./Pot";
 import { ActionBar } from "./ActionBar";
 import { ReconnectBanner } from "./ReconnectBanner";
+import { HostStart } from "./HostStart";
+import { RebuyButton } from "./RebuyButton";
+import { TableMenu } from "./TableMenu";
 import type { BetBounds } from "./BetSlider";
 
 export default function Table() {
@@ -145,6 +148,7 @@ export default function Table() {
           >
             <Board board={board} />
             <Pot pot={pot} bb={bb} />
+            <HostStart />
           </div>
         )}
 
@@ -174,6 +178,7 @@ export default function Table() {
 
       {/* Thumb-reachable action band */}
       <div className="shrink-0 border-t border-line" style={{ background: "var(--surface-2)" }}>
+        <RebuyButton />
         <ActionBar toCall={toCall} bounds={bounds} />
       </div>
 
@@ -202,7 +207,7 @@ function TopHud({
     <div className="flex items-center justify-between gap-3 px-3 py-2">
       <div className="glass flex items-center gap-2.5 rounded-full px-3 py-1.5 text-sm">
         <span className="text-[10px] font-semibold uppercase tracking-widest text-ink-faint">
-          {street ?? "—"}
+          {street ?? "-"}
         </span>
         <span className="h-3 w-px bg-line" />
         <span className="num text-ink-dim">
@@ -217,12 +222,15 @@ function TopHud({
           </>
         )}
       </div>
-      <button
-        onClick={toggleBB}
-        className="glass rounded-full px-3 py-1.5 text-xs font-medium text-ink-dim no-tap-highlight"
-      >
-        {showInBB ? "BB" : "Chips"}
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={toggleBB}
+          className="glass rounded-full px-3 py-1.5 text-xs font-medium text-ink-dim no-tap-highlight"
+        >
+          {showInBB ? "BB" : "Chips"}
+        </button>
+        <TableMenu />
+      </div>
     </div>
   );
 }

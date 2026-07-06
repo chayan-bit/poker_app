@@ -111,6 +111,15 @@ export class MockServer implements NetTransport {
     });
   }
 
+  /** Broadcasts the full seat list, mirroring the server's seat_update shape
+   * (server: table/events.go seatUpdate{TableID, Seats []seatView}). */
+  private emitSeatUpdate(): void {
+    this.emit({
+      type: Ev.SeatUpdate,
+      data: { tableId: TABLE, seats: this.seats },
+    });
+  }
+
   private pushSnapshot(nextToAct: number): void {
     const snap: TableSnapshot = {
       tableId: TABLE,
@@ -126,6 +135,7 @@ export class MockServer implements NetTransport {
       yourHole: FIXTURE_HOLE,
       nextToAct,
       actByMs: nextToAct === this.seatHero ? nowMs() + 20_000 : undefined,
+      handRunning: true,
       seq: this.seq + 1,
     };
     this.emit({ type: Ev.Snapshot, data: snap });
@@ -154,6 +164,7 @@ export class MockServer implements NetTransport {
       yourHole: FIXTURE_HOLE,
       nextToAct,
       actByMs,
+      handRunning: true,
       seq: this.seq + 1,
     };
     this.emit({ type: Ev.Snapshot, data: snap });
@@ -186,6 +197,40 @@ export class MockServer implements NetTransport {
   }
 
   send(cmd: Command): void {
+    if (cmd.type === "start_hand") {
+      this.emit({
+        type: Ev.TableStatus,
+        data: { tableId: TABLE, waitingForHost: false, seatedCount: this.seats.length },
+      });
+      return;
+    }
+    if (cmd.type === "sit_out" || cmd.type === "sit_in") {
+      const hero = this.seats[this.seatHero];
+      if (!hero) return;
+      hero.sittingOut = cmd.type === "sit_out";
+      this.seats = this.seats.map((x) => (x.seat === this.seatHero ? hero : x));
+      this.emitSeatUpdate();
+      return;
+    }
+    if (cmd.type === "rebuy") {
+      const hero = this.seats[this.seatHero];
+      if (!hero) return;
+      const bb = BB;
+      const min = bb;
+      const max = 1000 * bb;
+      if (cmd.data.amount < min || cmd.data.amount > max) {
+        this.emit({
+          type: Ev.Error,
+          data: { code: "bad_rebuy", message: "rebuy would put stack outside table range" },
+        });
+        return;
+      }
+      hero.stack += cmd.data.amount;
+      hero.sittingOut = false;
+      this.seats = this.seats.map((x) => (x.seat === this.seatHero ? hero : x));
+      this.emitSeatUpdate();
+      return;
+    }
     if (cmd.type !== "place_bet") return; // demo only reacts to betting
     const { kind, amount } = cmd.data;
     const hero = this.seats[this.seatHero];
@@ -318,7 +363,7 @@ function seat(
     stack,
     sittingOut: false,
     lastAction,
-    connected: true,
+    disconnected: false,
     committed: lastAction?.amount ?? 0,
   };
 }

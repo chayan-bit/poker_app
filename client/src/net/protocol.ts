@@ -175,7 +175,8 @@ export interface SeatState {
   sittingOut: boolean;
   /** Last discrete action shown as a persistent chip-tag until next street. */
   lastAction?: { kind: BetKind; amount: number };
-  connected: boolean;
+  /** Socket dropped, within the disconnect-grace window (server: seatView.Disconnected). */
+  disconnected: boolean;
   /** Total chips this seat has committed on the current street, if sent. */
   committed?: number;
 }
@@ -195,12 +196,16 @@ export interface TableSnapshot {
   yourHole: Card[];
   nextToAct: number;
   actByMs?: number;
+  /** Whether a hand is currently running (server: tableSnapshot.HandRunning). */
+  handRunning: boolean;
   seq: number;
 }
 
+/** Mirrors server's seatUpdate{TableID, Seats []seatView}: a broadcast carries
+ * the FULL seat list every time, not a single-seat delta. */
 export interface SeatUpdate {
   tableId: string;
-  seat: SeatState;
+  seats: SeatState[];
 }
 
 /** Emitted after a hand so any client can recompute Shuffle(seed). */
