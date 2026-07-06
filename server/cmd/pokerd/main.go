@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"log"
 	"net/http"
@@ -22,7 +23,8 @@ func main() {
 	addr := envOr("POKERD_ADDR", ":8080")
 
 	reg := table.NewRegistry()
-	authn := &auth.Authenticator{}
+	store := auth.NewMemStore()
+	authn := auth.NewAuthenticator(authSecret(), store)
 	gw := &ws.Gateway{Reg: reg, Auth: authn.FromRequest}
 
 	mux := http.NewServeMux()
@@ -31,6 +33,8 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.Handle("/ws", gw.Handler())
+	mux.Handle("/api/auth/guest", authn.GuestHandler())
+	mux.Handle("/api/auth/upgrade", authn.UpgradeHandler())
 	// TODO: REST lobby endpoints (list public tables, create private room).
 
 	srv := &http.Server{
@@ -61,4 +65,20 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// authSecret reads POKERD_AUTH_SECRET, or generates a random ephemeral secret
+// (with a warning) so the server still starts in dev. An ephemeral secret
+// means every restart invalidates existing tokens/cookies.
+func authSecret() []byte {
+	if v := os.Getenv("POKERD_AUTH_SECRET"); v != "" {
+		return []byte(v)
+	}
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		log.Fatalf("failed to generate ephemeral auth secret: %v", err)
+	}
+	log.Print("WARNING: POKERD_AUTH_SECRET not set; using a random ephemeral secret. " +
+		"All auth tokens will be invalidated on restart. Set POKERD_AUTH_SECRET in production.")
+	return secret
 }
