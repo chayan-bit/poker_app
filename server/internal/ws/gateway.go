@@ -23,6 +23,12 @@ type Gateway struct {
 	Reg  *table.Registry
 	Auth func(*http.Request) (playerID string, err error) // pluggable, see internal/auth
 
+	// OnJoin/OnDisconnect are optional presence hooks (wired to the social
+	// package's tracker in main.go). Called from connection goroutines; the
+	// implementations must be thread-safe.
+	OnJoin       func(playerID, tableID string)
+	OnDisconnect func(playerID string)
+
 	// AllowedOrigins lists the coder/websocket OriginPatterns used to verify
 	// the WebSocket handshake's Origin header. If empty, defaults to
 	// localhost dev patterns (see defaultAllowedOrigins) - fine for local
@@ -170,6 +176,9 @@ func (g *Gateway) notifyDisconnect(playerID string, joined map[string]*table.Tab
 		env := protocol.Envelope{V: protocol.ProtocolVersion, Type: protocol.CmdDisconnected, Data: data}
 		t.Submit(table.Command{PlayerID: playerID, Msg: env, Reply: out})
 	}
+	if g.OnDisconnect != nil {
+		g.OnDisconnect(playerID)
+	}
 }
 
 // sendError enqueues a non-fatal protocol error event for the client. It
@@ -199,6 +208,9 @@ func (g *Gateway) route(playerID string, env protocol.Envelope, out chan<- proto
 		return
 	}
 	// Remember this table so the socket close can notify it (issue #16).
+	if _, seen := joined[ref.TableID]; !seen && g.OnJoin != nil {
+		g.OnJoin(playerID, ref.TableID)
+	}
 	joined[ref.TableID] = t
 	t.Submit(table.Command{PlayerID: playerID, Msg: env, Reply: out})
 }

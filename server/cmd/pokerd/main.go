@@ -20,6 +20,7 @@ import (
 	"github.com/chayan-bit/poker_app/server/internal/history"
 	"github.com/chayan-bit/poker_app/server/internal/lobby"
 	"github.com/chayan-bit/poker_app/server/internal/postgres"
+	"github.com/chayan-bit/poker_app/server/internal/social"
 	"github.com/chayan-bit/poker_app/server/internal/table"
 	"github.com/chayan-bit/poker_app/server/internal/ws"
 )
@@ -36,6 +37,8 @@ func main() {
 		Reg:            reg,
 		Auth:           wsAuth(authn),
 		AllowedOrigins: ws.OriginsFromEnv(os.Getenv("POKERD_ALLOWED_ORIGINS")),
+		OnJoin:         social.Presence.SetTable,
+		OnDisconnect:   social.Presence.SetOffline,
 	}
 	lob := lobby.New(reg, authn.FromRequest)
 	hands := handsapi.New(histStore, authn.FromRequest)
@@ -53,6 +56,7 @@ func main() {
 	mux.Handle("/api/rooms/join", lob.JoinRoom())
 	mux.Handle("/api/quickseat", lob.Quickseat())
 	hands.Register(mux)
+	social.New(social.NewMemFriendStore(), social.Presence, authn.FromRequest, nil).Register(mux)
 
 	srv := &http.Server{
 		Addr:              addr,
