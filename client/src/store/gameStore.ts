@@ -144,7 +144,12 @@ interface GameState {
   tourney: TourneyState;
 
   // ---- actions ----
-  connect: (opts: { url?: string; mock?: boolean; token?: string }) => void;
+  connect: (opts: {
+    url?: string;
+    mock?: boolean;
+    token?: string;
+    tableId?: string;
+  }) => void;
   /** Offline (nearby) entry point. `build` receives the same event/status sink
    *  the WS client uses and returns a NetTransport that routes commands into the
    *  mesh, so the store's dispatch path is byte-identical to the online one. */
@@ -477,9 +482,14 @@ export const useGame = create<GameState>((set, get) => {
     rebuyError: null,
     tourney: { ...EMPTY_TOURNEY },
 
-    connect: ({ url, mock, token }) => {
+    connect: ({ url, mock, token, tableId }) => {
       get().transport?.close();
       clearPendingTimer();
+      // A tableId from the caller (an invite/Quick Seat ?join=) is the table to
+      // join on open; fall back to whatever table the store already holds (a
+      // resume/reconnect). Persist it so JoinTable + resync target it.
+      const joinId = tableId ?? get().tableId ?? undefined;
+      if (joinId) set({ tableId: joinId });
       if (mock || !url) {
         const server = new MockServer(handlers);
         set({ transport: server, usingMock: true });
@@ -487,7 +497,7 @@ export const useGame = create<GameState>((set, get) => {
       } else {
         const client = new WsClient(url, handlers, {
           token,
-          tableId: get().tableId ?? undefined,
+          tableId: joinId,
         });
         set({ transport: client, usingMock: false });
         client.connect();
