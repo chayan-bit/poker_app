@@ -34,6 +34,11 @@ func (t *Table) handleJoin(cmd Command) {
 	}
 	t.sendTo(cmd.Reply, protocol.EvSnapshot, t.snapshotFor(cmd.PlayerID))
 	t.refreshIdle()
+	// In a tournament, players are pre-seated but hands wait until everyone has
+	// connected; a join may complete that quorum, so try to start.
+	if t.Cfg.Tournament != nil {
+		t.startHandIfReady()
+	}
 }
 
 // handleSitDown validates a buy-in, debits the ledger, seats the player, and

@@ -42,6 +42,10 @@ func (t *Table) handleRebuy(cmd Command) {
 		t.sendError(cmd.Reply, "hand_in_progress", "rebuy only allowed between hands")
 		return
 	}
+	if t.Cfg.Tournament != nil && t.Cfg.Tournament.NoRebuy {
+		t.sendError(cmd.Reply, "no_rebuy", "rebuys are not allowed in this tournament")
+		return
+	}
 	s := t.seats[seat]
 	newStack := s.stack + engine.Chips(rb.Amount)
 	min := t.Cfg.BigBlind

@@ -48,6 +48,10 @@ type Config struct {
 	// HostPlayerID is the private room's host. If empty, the first player to sit
 	// becomes host (the lobby may set it explicitly later).
 	HostPlayerID string
+	// Tournament, when non-nil, runs this table as a single-table tournament
+	// (sit-and-go). See tourney.go for the additive seam; nil means a normal
+	// cash table with fully unchanged behaviour.
+	Tournament *TourneyRules
 	// Feature toggles (Design_suite 9): RunItTwice, BombPots, Straddles, etc.
 }
 
@@ -68,6 +72,11 @@ type Deps struct {
 	// OnShutdown, if set, is invoked (from the table goroutine) with the table ID
 	// when the table shuts down on idle. The registry wires this to Remove.
 	OnShutdown func(tableID string)
+	// OnHandComplete, if set, is invoked (from the table goroutine) after every
+	// settled hand in tournament mode. It returns a directive that raises blinds,
+	// removes busted seats, and ends the tournament. Ignored on cash tables
+	// (Config.Tournament == nil). See tourney.go.
+	OnHandComplete OnHandComplete
 }
 
 // withDefaults fills any zero field with a production default so a table always
@@ -142,6 +151,9 @@ type Table struct {
 	hostStarted bool
 	// autoFolding guards driveAutoFolds against re-entrancy.
 	autoFolding bool
+	// tourneyDone latches true when a tournament completes, so no further hands
+	// deal. Always false on cash tables.
+	tourneyDone bool
 
 	// deadlines the loop multiplexes onto its single timer (zero == disarmed).
 	turnDeadline time.Time
@@ -172,6 +184,11 @@ func New(cfg Config, deps Deps) *Table {
 		timer:      d.Clock.NewTimer(),
 		startStack: map[int]engine.Chips{},
 		done:       make(chan struct{}),
+	}
+	// Tournament tables pre-seat their registered players at the starting stack
+	// before the loop runs; the first hand deals once those players connect.
+	if cfg.Tournament != nil {
+		t.seatTournamentPlayers()
 	}
 	// A brand-new table has no subscribers or seats, so start the idle clock.
 	// Safe to arm before the goroutine starts: nothing else touches the timer yet.

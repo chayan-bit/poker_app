@@ -22,6 +22,7 @@ import (
 	"github.com/chayan-bit/poker_app/server/internal/postgres"
 	"github.com/chayan-bit/poker_app/server/internal/social"
 	"github.com/chayan-bit/poker_app/server/internal/table"
+	"github.com/chayan-bit/poker_app/server/internal/tourney"
 	"github.com/chayan-bit/poker_app/server/internal/ws"
 )
 
@@ -40,7 +41,8 @@ func main() {
 		OnJoin:         social.Presence.SetTable,
 		OnDisconnect:   social.Presence.SetOffline,
 	}
-	lob := lobby.New(reg, authn.FromRequest)
+	sngMgr := tourney.NewManager(ledger, reg)
+	lob := lobby.New(reg, authn.FromRequest).WithSNG(sngMgr)
 	hands := handsapi.New(histStore, authn.FromRequest)
 
 	mux := http.NewServeMux()
@@ -55,6 +57,9 @@ func main() {
 	mux.Handle("/api/rooms", lob.CreateRoom())
 	mux.Handle("/api/rooms/join", lob.JoinRoom())
 	mux.Handle("/api/quickseat", lob.Quickseat())
+	mux.Handle("POST /api/sng", lob.CreateSNG())
+	mux.Handle("GET /api/sng", lob.ListSNG())
+	mux.Handle("POST /api/sng/register", lob.RegisterSNG())
 	hands.Register(mux)
 	social.New(social.NewMemFriendStore(), social.Presence, authn.FromRequest, nil).Register(mux)
 

@@ -30,8 +30,17 @@ func (t *Table) startHandIfReady() {
 	if t.Hand != nil {
 		return
 	}
+	// A completed tournament never deals again.
+	if t.tourneyDone {
+		return
+	}
 	eligible := t.eligibleSeats()
 	if len(eligible) < 2 {
+		return
+	}
+	// The first tournament hand waits until every pre-seated player is connected
+	// so nobody is dealt in before their client can receive hole cards.
+	if t.Cfg.Tournament != nil && t.handNum == 0 && !t.tourneyReadyToStart() {
 		return
 	}
 	// Private rooms wait for the host to deal the first hand; broadcast a status
@@ -210,6 +219,11 @@ func (t *Table) settle() {
 	t.Hand = nil
 	t.rec = nil
 	t.rotateButton()
+	// Tournament sequencing (blind clock, eliminations, payouts) is decided by
+	// the controller in package tourney and applied mechanically here.
+	if t.Cfg.Tournament != nil && t.deps.OnHandComplete != nil {
+		t.applyTourneyDirective(t.deps.OnHandComplete(t.tourneyStandings()))
+	}
 	t.startHandIfReady()
 }
 

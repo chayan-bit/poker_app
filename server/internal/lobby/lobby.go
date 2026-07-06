@@ -39,6 +39,7 @@ var quickseatBlinds = map[engine.Chips]bool{
 type Lobby struct {
 	reg  Registry
 	auth AuthFunc
+	sng  SNGManager // optional; nil disables the /api/sng endpoints
 }
 
 // New builds a Lobby backed by reg for table state and auth for identity.

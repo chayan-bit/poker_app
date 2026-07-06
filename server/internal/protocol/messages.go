@@ -60,7 +60,41 @@ const (
 	EvError       = "error"
 	EvFairReveal  = "fair_reveal"  // seed revealed after the hand, for verification
 	EvTableStatus = "table_status" // waiting-for-host / seated-count, drives a start button
+	// Tournament (sit-and-go) events. Emitted only by tables running in
+	// tournament mode; the sequencing logic lives in internal/tourney.
+	EvBlindsUp      = "blinds_up"       // a blind level elapsed; blinds raised at hand start
+	EvElimination   = "elimination"     // a seat busted (0 chips) and was removed
+	EvTourneyResult = "tourney_result"  // tournament over: final places and prizes
 )
+
+// BlindsUp announces that the blind clock advanced to a new level, applied at
+// the start of the hand that follows (never mid-hand).
+type BlindsUp struct {
+	Level int   `json:"level"` // 1-based level number now in effect
+	SB    int64 `json:"sb"`
+	BB    int64 `json:"bb"`
+}
+
+// Elimination announces a seat busting out of a tournament, with the place it
+// finished in (1 == winner; larger == busted earlier).
+type Elimination struct {
+	Seat     int    `json:"seat"`
+	PlayerID string `json:"playerId"`
+	Place    int    `json:"place"`
+}
+
+// TourneyPlace is one finisher's final standing and prize (in cash chips).
+type TourneyPlace struct {
+	PlayerID string `json:"playerId"`
+	Place    int    `json:"place"`
+	Prize    int64  `json:"prize"`
+}
+
+// TourneyResult is broadcast when a tournament completes: every finisher's
+// place and prize, ordered best place first.
+type TourneyResult struct {
+	Places []TourneyPlace `json:"places"`
+}
 
 // HandDealt announces a new hand. Only the recipient's own hole cards are sent;
 // opponents' cards are withheld until showdown (never trust the client).

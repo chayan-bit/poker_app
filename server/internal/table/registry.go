@@ -42,6 +42,25 @@ func (r *Registry) Create(cfg Config) *Table {
 	return t
 }
 
+// CreateTourney registers and starts a tournament table. It reuses the
+// registry's shared deps (ledger, history, clock) so a tournament draws on the
+// same economy as cash tables, adds the per-table OnHandComplete callback that
+// package tourney supplies for blind/elimination/payout sequencing, and wires
+// idle shutdown to Remove. cfg.Tournament must be non-nil.
+func (r *Registry) CreateTourney(cfg Config, onComplete OnHandComplete) *Table {
+	deps := r.Deps
+	deps.OnShutdown = r.Remove
+	deps.OnHandComplete = onComplete
+	t := New(cfg, deps)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byID[cfg.ID] = t
+	if cfg.JoinCode != "" {
+		r.byCode[cfg.JoinCode] = t
+	}
+	return t
+}
+
 // Remove drops a table from the registry's indexes. Safe to call from the
 // table's own goroutine (idle shutdown) - it takes only the registry lock.
 func (r *Registry) Remove(id string) {
