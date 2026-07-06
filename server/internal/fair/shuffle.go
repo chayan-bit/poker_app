@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 
 	"github.com/chayan-bit/poker_app/server/internal/engine"
 )
@@ -37,6 +38,22 @@ func (s Seed) Commitment() string {
 
 // Hex renders the seed for the reveal / hand history.
 func (s Seed) Hex() string { return hex.EncodeToString(s[:]) }
+
+// SeedFromHex parses a 64-character hex string (32 bytes) into a Seed.
+// It rejects wrong-length input and non-hex characters so callers (the
+// verifier CLI, hand-history import) fail fast on malformed reveals.
+func SeedFromHex(s string) (Seed, error) {
+	var seed Seed
+	if len(s) != hex.EncodedLen(len(seed)) {
+		return Seed{}, fmt.Errorf("fair: seed must be %d hex chars, got %d", hex.EncodedLen(len(seed)), len(s))
+	}
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return Seed{}, fmt.Errorf("fair: seed is not valid hex: %w", err)
+	}
+	copy(seed[:], b)
+	return seed, nil
+}
 
 // Shuffle returns the canonical deck permuted deterministically from seed.
 // Same seed always yields the same deck; this is what makes it verifiable.
