@@ -28,4 +28,4 @@ compose-up: ## start pokerd + postgres via docker compose
 wasm: ## build client/public/tablecore.wasm + wasm_exec.js
 	cd server && GOOS=js GOARCH=wasm go build -trimpath -ldflags "-s -w" \
 		-o ../client/public/tablecore.wasm ./cmd/tablewasm
-	cp "$$(cd server && go env GOROOT)/lib/wasm/wasm_exec.js" client/public/wasm_exec.js
+	install -m 0644 "$$(cd server && go env GOROOT)/lib/wasm/wasm_exec.js" client/public/wasm_exec.js

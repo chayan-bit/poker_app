@@ -1,0 +1,32 @@
+{
+  "name": "@feltpoker/local-server",
+  "version": "0.1.0",
+  "description": "Capacitor plugin: mDNS discovery + local WebSocket transport so every native peer runs its own LAN mesh endpoint (poker_app issue #28). Self-contained skeleton; native bodies are honest stubs with TODOs.",
+  "private": true,
+  "type": "module",
+  "main": "dist/plugin.cjs.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "files": [
+    "dist/",
+    "ios/",
+    "android/",
+    "FeltpokerLocalServer.podspec",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "note": "This is a skeleton. Wire into the app with `npm i` + `npx cap sync` from client/ once client/package.json and the native projects are owned by this workstream (they are edited by another agent this wave)."
+  },
+  "capacitor": {
+    "ios": { "src": "ios" },
+    "android": { "src": "android" }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=6.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/core": ">=6.0.0",
+    "typescript": ">=5.4.0"
+  }
+}
