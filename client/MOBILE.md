@@ -66,6 +66,34 @@ npx cap open android   # opens android/ in Android Studio
 In Xcode: select a Simulator or device, then Product > Run.
 In Android Studio: let Gradle sync, pick a device/emulator, then Run.
 
+### Headless release builds (CI / no IDE)
+
+Android, with a reproducible Nix-pinned SDK (platforms 34+35, build-tools 35,
+JDK 17 - Gradle 8.2.1 does not run on Java 21):
+
+```sh
+nix-shell client/android/shell.nix --run 'cd client/android && ./gradlew :app:assembleRelease'
+# -> client/android/app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+The APK is unsigned. Sign it for the Play Store with your upload key
+(`apksigner sign --ks <keystore> ...`) or configure a `signingConfig` in
+`android/app/build.gradle` and build an AAB with `:app:bundleRelease`.
+
+iOS release/archive requires the Xcode iOS platform component installed
+(`xcodebuild -downloadPlatform iOS` if missing) plus an Apple Developer signing
+identity + provisioning profile:
+
+```sh
+xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release \
+  -archivePath build/App.xcarchive archive
+xcodebuild -exportArchive -archivePath build/App.xcarchive \
+  -exportOptionsPlist ExportOptions.plist -exportPath build/ipa
+```
+
+Set the Team + bundle id (`com.felt.poker` is a placeholder - confirm before
+submission) in Xcode's Signing & Capabilities first.
+
 ## Icons + splash
 
 Generated from `resources/icon.png` and `resources/splash.png` (spade-in-ring
