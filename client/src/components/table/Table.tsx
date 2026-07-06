@@ -19,6 +19,10 @@ import { HostStart } from "./HostStart";
 import { RebuyButton } from "./RebuyButton";
 import { TableMenu } from "./TableMenu";
 import type { BetBounds } from "./BetSlider";
+import { BlindsUpBanner } from "@/components/tourney/BlindsUpBanner";
+import { EliminationToast } from "@/components/tourney/EliminationToast";
+import { PlacementScreen } from "@/components/tourney/PlacementScreen";
+import { StandingsOverlay } from "@/components/tourney/StandingsOverlay";
 
 export default function Table() {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -176,15 +180,24 @@ export default function Table() {
         })}
       </div>
 
-      {/* Thumb-reachable action band */}
-      <div className="shrink-0 border-t border-line" style={{ background: "var(--surface-2)" }}>
-        <RebuyButton />
-        <ActionBar toCall={toCall} bounds={bounds} />
-      </div>
+      {/* Thumb-reachable action band - hidden entirely for spectators (no
+          seat of their own, i.e. yourSeat === null, as when rail-a-friend
+          joins a table without sit_down). */}
+      {yourSeat !== null && (
+        <div className="shrink-0 border-t border-line" style={{ background: "var(--surface-2)" }}>
+          <RebuyButton />
+          <ActionBar toCall={toCall} bounds={bounds} />
+        </div>
+      )}
 
       <div className="sr-only" aria-live="polite" role="status">
         {narration}
       </div>
+
+      <BlindsUpBanner />
+      <EliminationToast />
+      <PlacementScreen />
+      <StandingsOverlay />
     </div>
   );
 }

@@ -106,6 +106,9 @@ export const Ev = {
   FairReveal: "fair_reveal",
   Error: "error",
   TableStatus: "table_status",
+  BlindsUp: "blinds_up",
+  Elimination: "elimination",
+  TourneyResult: "tourney_result",
 } as const;
 export type EvType = (typeof Ev)[keyof typeof Ev];
 
@@ -228,6 +231,36 @@ export interface TableStatus {
   seatedCount: number;
 }
 
+/** Mirrors server/internal/protocol/messages.go BlindsUp: the blind clock
+ * advanced to a new level, applied at the start of the next hand. */
+export interface BlindsUp {
+  level: number;
+  sb: number;
+  bb: number;
+}
+
+/** Mirrors server's Elimination: a seat busted (0 chips) and was removed.
+ * place is 1-based; 1 == winner, larger == busted earlier. */
+export interface Elimination {
+  seat: number;
+  playerId: string;
+  place: number;
+}
+
+/** One finisher's final standing and prize (cash chips), mirrors
+ * server's TourneyPlace. */
+export interface TourneyPlace {
+  playerId: string;
+  place: number;
+  prize: number;
+}
+
+/** Mirrors server's TourneyResult: broadcast when a tournament completes,
+ * every finisher's place and prize, ordered best place first. */
+export interface TourneyResult {
+  places: TourneyPlace[];
+}
+
 export type ServerEvent =
   | { type: typeof Ev.HandDealt; seq: number; data: HandDealt }
   | { type: typeof Ev.BetPlaced; seq: number; data: BetPlaced }
@@ -237,4 +270,7 @@ export type ServerEvent =
   | { type: typeof Ev.SeatUpdate; seq: number; data: SeatUpdate }
   | { type: typeof Ev.FairReveal; seq: number; data: FairReveal }
   | { type: typeof Ev.Error; seq?: number; data: ErrorEvent }
-  | { type: typeof Ev.TableStatus; seq: number; data: TableStatus };
+  | { type: typeof Ev.TableStatus; seq: number; data: TableStatus }
+  | { type: typeof Ev.BlindsUp; seq: number; data: BlindsUp }
+  | { type: typeof Ev.Elimination; seq: number; data: Elimination }
+  | { type: typeof Ev.TourneyResult; seq: number; data: TourneyResult };

@@ -160,6 +160,57 @@ export function quickseat(smallBlind: number): Promise<QuickseatResponse> {
   });
 }
 
+// ---- Sit-and-go tournaments ----
+// Mirrors server/internal/lobby/sng.go and server/internal/tourney/sng.go
+// (tourney.View) exactly.
+
+/** One open sit-and-go, as listed by GET /api/sng (tourney.View). */
+export interface SngView {
+  sngId: string;
+  name: string;
+  seats: number;
+  registered: number;
+  buyIn: number;
+}
+
+/** GET /api/sng: the open sit-and-go listing. */
+export function listSNG(): Promise<SngView[]> {
+  return request<SngView[]>("/api/sng", { method: "GET" });
+}
+
+export interface CreateSngRequest {
+  name: string;
+  seats: number;
+  buyIn: number;
+}
+
+export interface CreateSngResponse {
+  sngId: string;
+  tableId: string;
+}
+
+/** POST /api/sng: opens a sit-and-go, returns its id and pre-allocated table. */
+export function createSNG(req: CreateSngRequest): Promise<CreateSngResponse> {
+  return request<CreateSngResponse>("/api/sng", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export interface RegisterSngResponse {
+  status: string;
+}
+
+/** POST /api/sng/register: registers the caller, collecting the buy-in.
+ * Rejects with ApiError code "insufficient_funds" if the ledger can't cover
+ * it - surface that inline, never as a modal. */
+export function registerSNG(sngId: string): Promise<RegisterSngResponse> {
+  return request<RegisterSngResponse>("/api/sng/register", {
+    method: "POST",
+    body: JSON.stringify({ sngId }),
+  });
+}
+
 // ---- Hand history ----
 // NOTE: server-side routes for these were not found under server/cmd/pokerd
 // or server/internal/lobby at the time of writing (no "/api/hands" or

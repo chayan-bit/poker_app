@@ -20,6 +20,7 @@ import {
   type ServerEvent,
   type Street,
   type TableSnapshot,
+  type TourneyResult,
 } from "@/net/protocol";
 
 /** How long an optimistic action may wait for a confirming bet_placed event
@@ -34,6 +35,49 @@ export interface FairnessRecord {
 }
 
 const MAX_FAIRNESS_RECORDS = 50;
+
+/** A transient "blinds up" banner: cleared by the UI after its display window
+ * (or by clearBlindsUpBanner). `at` lets the banner component key its
+ * fade-in even if the same level somehow repeats. */
+export interface BlindsUpBanner {
+  level: number;
+  sb: number;
+  bb: number;
+  at: number;
+}
+
+/** The most recent elimination, kept until the UI dismisses it. Includes the
+ * busted seat's last-known name so the toast/placement screen can render it
+ * even after seat_update removes the seat from the table. */
+export interface EliminationEvent {
+  seat: number;
+  playerId: string;
+  place: number;
+  name: string;
+  at: number;
+}
+
+export interface TourneyState {
+  level: number;
+  sb: number;
+  bb: number;
+  /** This player's final finishing place, set once they are eliminated (or
+   * they win, in which case tourneyResult carries place 1). */
+  myPlace: number | null;
+  blindsUp: BlindsUpBanner | null;
+  lastElimination: EliminationEvent | null;
+  result: TourneyResult | null;
+}
+
+const EMPTY_TOURNEY: TourneyState = {
+  level: 0,
+  sb: 0,
+  bb: 0,
+  myPlace: null,
+  blindsUp: null,
+  lastElimination: null,
+  result: null,
+};
 
 export interface PendingAction {
   kind: BetKind;
@@ -91,6 +135,9 @@ interface GameState {
   rebuyPending: boolean;
   rebuyError: string | null;
 
+  // ---- tournament (sit-and-go) slice ----
+  tourney: TourneyState;
+
   // ---- actions ----
   connect: (opts: { url?: string; mock?: boolean; token?: string }) => void;
   disconnect: () => void;
@@ -106,6 +153,11 @@ interface GameState {
   clearRebuyError: () => void;
   sitOut: () => void;
   sitIn: () => void;
+
+  // ---- tourney actions ----
+  clearBlindsUpBanner: () => void;
+  clearElimination: () => void;
+  clearTourneyResult: () => void;
 
   // ---- fairness selectors ----
   getFairnessRecord: (handId: string) => FairnessRecord | undefined;
@@ -272,6 +324,48 @@ export const useGame = create<GameState>((set, get) => {
         });
         break;
       }
+      case Ev.BlindsUp: {
+        const d = ev.data;
+        set((s) => ({
+          tourney: {
+            ...s.tourney,
+            level: d.level,
+            sb: d.sb,
+            bb: d.bb,
+            blindsUp: { level: d.level, sb: d.sb, bb: d.bb, at: Date.now() },
+          },
+          // The header blinds label reads off the top-level `blinds` tuple;
+          // update it immediately rather than waiting for the next hand_dealt.
+          blinds: [d.sb, d.bb],
+        }));
+        break;
+      }
+      case Ev.Elimination: {
+        const d = ev.data;
+        set((s) => {
+          const bustedSeat = s.seats.find((seat) => seat.seat === d.seat);
+          const isHero = d.seat === s.yourSeat;
+          return {
+            tourney: {
+              ...s.tourney,
+              myPlace: isHero ? d.place : s.tourney.myPlace,
+              lastElimination: {
+                seat: d.seat,
+                playerId: d.playerId,
+                place: d.place,
+                name: bustedSeat?.name ?? d.playerId,
+                at: Date.now(),
+              },
+            },
+          };
+        });
+        break;
+      }
+      case Ev.TourneyResult: {
+        const d = ev.data;
+        set((s) => ({ tourney: { ...s.tourney, result: d } }));
+        break;
+      }
     }
   }
 
@@ -369,6 +463,7 @@ export const useGame = create<GameState>((set, get) => {
     tableStatus: null,
     rebuyPending: false,
     rebuyError: null,
+    tourney: { ...EMPTY_TOURNEY },
 
     connect: ({ url, mock, token }) => {
       get().transport?.close();
@@ -396,6 +491,7 @@ export const useGame = create<GameState>((set, get) => {
         ...EMPTY_TABLE,
         rebuyPending: false,
         rebuyError: null,
+        tourney: { ...EMPTY_TOURNEY },
       });
     },
 
@@ -479,6 +575,13 @@ export const useGame = create<GameState>((set, get) => {
       if (!transport || !tableId) return;
       transport.send({ type: Cmd.SitIn, data: { tableId } });
     },
+
+    clearBlindsUpBanner: () =>
+      set((s) => ({ tourney: { ...s.tourney, blindsUp: null } })),
+    clearElimination: () =>
+      set((s) => ({ tourney: { ...s.tourney, lastElimination: null } })),
+    clearTourneyResult: () =>
+      set((s) => ({ tourney: { ...s.tourney, result: null } })),
 
     getFairnessRecord: (handId) =>
       get().fairness.find((f) => f.handId === handId),

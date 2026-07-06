@@ -2,14 +2,16 @@
 // one-tap Quick Seat. Private: create room / join by 6-char code. Plus the
 // friends panel. Framer Motion is allowed here (non-table chrome).
 
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Screen, Card, Button, Input, SpadeMark, Wordmark, Icon } from "@/components/ui/kit";
 import { ChipStack } from "@/components/table/Chips";
 import { FriendsPanel } from "./FriendsPanel";
+import { listSNG, registerSNG, ApiError, type SngView } from "@/net/api";
 
 const CreateRoom = lazy(() => import("./CreateRoom"));
+const CreateSng = lazy(() => import("./CreateSng"));
 
 interface StakeTable {
   id: string;
@@ -46,6 +48,46 @@ export default function Lobby() {
   const nav = useNavigate();
   const [code, setCode] = useState("");
   const [creating, setCreating] = useState(false);
+
+  const [sngs, setSngs] = useState<SngView[]>([]);
+  const [sngListError, setSngListError] = useState<string | null>(null);
+  const [creatingSng, setCreatingSng] = useState(false);
+  const [registering, setRegistering] = useState<string | null>(null);
+  const [registerError, setRegisterError] = useState<{ id: string; message: string } | null>(null);
+
+  const refreshSngs = () => {
+    listSNG()
+      .then((rows) => {
+        setSngs(rows);
+        setSngListError(null);
+      })
+      .catch((err) => {
+        setSngListError(err instanceof ApiError ? err.message : "Could not load sit-and-gos.");
+      });
+  };
+
+  useEffect(() => {
+    refreshSngs();
+  }, []);
+
+  const register = async (sngId: string) => {
+    setRegisterError(null);
+    setRegistering(sngId);
+    try {
+      await registerSNG(sngId);
+      nav("/table");
+    } catch (err) {
+      const message =
+        err instanceof ApiError && err.code === "insufficient_funds"
+          ? "Not enough chips for this buy-in."
+          : err instanceof ApiError
+            ? err.message
+            : "Could not register.";
+      setRegisterError({ id: sngId, message });
+    } finally {
+      setRegistering(null);
+    }
+  };
 
   return (
     <Screen wide>
@@ -161,6 +203,51 @@ export default function Lobby() {
             </Suspense>
           )}
 
+          <Card>
+            <div className="flex items-center justify-between">
+              <SectionLabel>Sit &amp; go</SectionLabel>
+              <button
+                onClick={() => setCreatingSng((v) => !v)}
+                className="text-xs font-semibold uppercase tracking-wider text-ink-dim no-tap-highlight"
+              >
+                {creatingSng ? "Close" : "Create"}
+              </button>
+            </div>
+
+            {sngListError && (
+              <p className="num mt-2 text-sm" style={{ color: "var(--danger)" }} role="alert">
+                {sngListError}
+              </p>
+            )}
+
+            <div className="mt-3 flex flex-col gap-2">
+              {sngs.length === 0 && !sngListError && (
+                <p className="text-sm text-ink-faint">No open sit-and-gos right now.</p>
+              )}
+              {sngs.map((sng) => (
+                <SngRow
+                  key={sng.sngId}
+                  sng={sng}
+                  busy={registering === sng.sngId}
+                  error={registerError?.id === sng.sngId ? registerError.message : null}
+                  onRegister={() => register(sng.sngId)}
+                />
+              ))}
+            </div>
+          </Card>
+
+          {creatingSng && (
+            <Suspense fallback={<Card>Loading…</Card>}>
+              <CreateSng
+                onClose={() => setCreatingSng(false)}
+                onCreated={() => {
+                  setCreatingSng(false);
+                  refreshSngs();
+                }}
+              />
+            </Suspense>
+          )}
+
           <FriendsPanel />
         </motion.div>
       </div>
@@ -182,6 +269,48 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
     <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-ink-dim">
       {children}
     </h2>
+  );
+}
+
+// One sit-and-go listing row: name, buy-in, seats filled/max, and a Register
+// CTA. insufficient_funds and other register failures surface inline right
+// below the row - never as a modal.
+function SngRow({
+  sng,
+  busy,
+  error,
+  onRegister,
+}: {
+  sng: SngView;
+  busy: boolean;
+  error: string | null;
+  onRegister: () => void;
+}) {
+  const full = sng.registered >= sng.seats;
+  return (
+    <div className="card-edge flex flex-col gap-1.5 rounded-xl px-3.5 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold">{sng.name}</p>
+          <p className="num text-xs text-ink-faint">
+            Buy-in {sng.buyIn.toLocaleString("en-US")} · {sng.registered}/{sng.seats} seated
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          className="min-h-0 px-3 py-1.5 text-sm"
+          disabled={busy || full}
+          onClick={onRegister}
+        >
+          {full ? "Full" : busy ? "Joining…" : "Register"}
+        </Button>
+      </div>
+      {error && (
+        <p className="num text-xs font-medium" style={{ color: "var(--danger)" }} role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
