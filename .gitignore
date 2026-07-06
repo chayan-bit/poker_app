@@ -8,9 +8,8 @@ client/node_modules/
 client/dist/
 client/.vite/
 
-# Capacitor native shells
-client/ios/
-client/android/
+# Build metadata
+client/*.tsbuildinfo
 
 # Env / secrets
 .env

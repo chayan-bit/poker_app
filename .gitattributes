@@ -1,0 +1,4 @@
+client/android/gradlew.bat -text
+*.png binary
+*.jar binary
+*.ico binary

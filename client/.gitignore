@@ -3,9 +3,11 @@ dist
 dist-ssr
 *.local
 .DS_Store
-ios
-android
 .env
+
+# Capacitor native projects (client/ios, client/android) ARE committed.
+# Their build artifacts (Pods, build/, generated web assets) are ignored by
+# each platform's own .gitignore, so do not blanket-ignore ios/ or android/ here.
 .env.local
 
 # Generated WASM artifacts (built via `make wasm`)
