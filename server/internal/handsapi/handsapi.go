@@ -8,7 +8,9 @@ package handsapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/chayan-bit/poker_app/server/internal/history"
 )
@@ -64,19 +66,13 @@ func (h *Handlers) requireAuth(w http.ResponseWriter, r *http.Request) (playerID
 	return playerID, true
 }
 
-// getHand handles GET /api/hands/{id}: the full HandRecord as stored,
-// including fairness commitment/seed fields.
-//
-// Privacy assumption: the stored HandRecord only contains hole cards that
-// were legitimately revealed (folded face-down seats have empty Hole, and a
-// showdown reveals only the hands that were shown). This handler trusts that
-// invariant and returns the record as-is.
-//
-// TODO(handsapi): once the Recorder starts capturing mucked-but-dealt hole
-// cards (e.g. for future replay/animation features), mask any hole cards for
-// seats that folded or mucked before this endpoint serializes the record.
+// getHand handles GET /api/hands/{id}: the HandRecord as stored, except hole
+// cards are masked per requester (see maskHoleCards). Fairness
+// commitment/seed fields are always returned as-is, since anyone can already
+// recompute the shuffle from them.
 func (h *Handlers) getHand(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.requireAuth(w, r); !ok {
+	playerID, ok := h.requireAuth(w, r)
+	if !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -85,7 +81,8 @@ func (h *Handlers) getHand(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no hand with that id")
 		return
 	}
-	b, err := history.ExportJSON(rec)
+	masked := maskHoleCards(rec, playerID)
+	b, err := history.ExportJSON(masked)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to serialize hand")
 		return
@@ -95,9 +92,11 @@ func (h *Handlers) getHand(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-// getHandText handles GET /api/hands/{id}/text: a plain-text hand history.
+// getHandText handles GET /api/hands/{id}/text: a plain-text hand history,
+// with a hole-cards section masked per requester (see maskHoleCards).
 func (h *Handlers) getHandText(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.requireAuth(w, r); !ok {
+	playerID, ok := h.requireAuth(w, r)
+	if !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -106,10 +105,66 @@ func (h *Handlers) getHandText(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no hand with that id")
 		return
 	}
-	text := history.ExportText(rec)
+	masked := maskHoleCards(rec, playerID)
+	text := history.ExportText(masked) + holeCardsSection(masked)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(text))
+}
+
+// maskedHole is the placeholder returned for a seat the requester may not
+// see, matching the API contract (["??","??"] in JSON, "(mucked)" in text).
+var maskedHole = []string{"??", "??"}
+
+// reachedShowdown reports whether seatID has a recorded showdown result.
+// history.Recorder.OnShowdown only populates HandRecord.Results for seats
+// that were still Active/AllIn when settle() ran (see
+// internal/table/lifecycle.go settle()), so presence as a Results key is
+// exactly "reached showdown and was required to show".
+func reachedShowdown(rec history.HandRecord, seatID int) bool {
+	_, ok := rec.Results[seatID]
+	return ok
+}
+
+// maskHoleCards returns a copy of rec whose Seats slice hides hole cards for
+// every seat except the viewer's own and any seat that reached showdown. The
+// stored record (and rec itself) is never mutated: history.Store keeps the
+// full, unmasked data needed for the fairness reveal.
+func maskHoleCards(rec history.HandRecord, viewerID string) history.HandRecord {
+	masked := rec
+	seats := make([]history.SeatInfo, len(rec.Seats))
+	for i, seat := range rec.Seats {
+		if seat.PlayerID == viewerID || reachedShowdown(rec, seat.SeatID) {
+			seat.Hole = append([]string(nil), seat.Hole...)
+		} else {
+			seat.Hole = append([]string(nil), maskedHole...)
+		}
+		seats[i] = seat
+	}
+	masked.Seats = seats
+	return masked
+}
+
+// isMaskedHole reports whether cards is the masked placeholder.
+func isMaskedHole(cards []string) bool {
+	return len(cards) == len(maskedHole) && cards[0] == maskedHole[0] && cards[1] == maskedHole[1]
+}
+
+// holeCardsSection renders the additive "*** HOLE CARDS ***" block for the
+// text export: visible seats show their two cards, masked seats show
+// "(mucked)". This is API-layer-only presentation; it does not change
+// history.ExportText's own output.
+func holeCardsSection(masked history.HandRecord) string {
+	var b strings.Builder
+	b.WriteString("*** HOLE CARDS ***\n")
+	for _, seat := range masked.Seats {
+		if isMaskedHole(seat.Hole) {
+			fmt.Fprintf(&b, "Seat %d: (mucked)\n", seat.SeatID)
+			continue
+		}
+		fmt.Fprintf(&b, "Seat %d: %s\n", seat.SeatID, strings.Join(seat.Hole, " "))
+	}
+	return b.String()
 }
 
 const (
