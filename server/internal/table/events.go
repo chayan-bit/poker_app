@@ -20,11 +20,13 @@ type cmdSitDown struct {
 
 // seatView is one seat's public state (no hole cards).
 type seatView struct {
-	Seat       int    `json:"seat"`
-	PlayerID   string `json:"playerId"`
-	Stack      int64  `json:"stack"`
-	SittingOut bool   `json:"sittingOut"`
-	InHand     bool   `json:"inHand"`
+	Seat         int    `json:"seat"`
+	PlayerID     string `json:"playerId"`
+	Stack        int64  `json:"stack"`
+	SittingOut   bool   `json:"sittingOut"`
+	InHand       bool   `json:"inHand"`
+	Committed    int64  `json:"committed"`    // chips this seat put in on the current street
+	Disconnected bool   `json:"disconnected"` // socket dropped, within grace window
 }
 
 // seatUpdate is broadcast whenever the set of seats or their stacks change.
@@ -34,7 +36,8 @@ type seatUpdate struct {
 }
 
 // tableSnapshot is the full public view sent to a joiner or on resync. It never
-// contains other players' hole cards.
+// contains OTHER players' hole cards; the recipient's own cards are included via
+// YourSeat/YourHole when a hand is running (see snapshotFor).
 type tableSnapshot struct {
 	TableID     string     `json:"tableId"`
 	Seats       []seatView `json:"seats"`
@@ -44,16 +47,29 @@ type tableSnapshot struct {
 	Street      string     `json:"street"`
 	Board       []string   `json:"board"`
 	Pot         int64      `json:"pot"`
-	ToAct       int        `json:"toAct"` // seat to act, or -1
+	ToAct       int        `json:"toAct"`      // seat to act, or -1
+	CurrentBet  int64      `json:"currentBet"` // highest committed this street
+	YourSeat    int        `json:"yourSeat"`   // recipient's seat, or -1
+	YourHole    []string   `json:"yourHole,omitempty"`
 }
 
 // betPlaced is broadcast after a validated betting action.
 type betPlaced struct {
-	Seat   int    `json:"seat"`
-	Kind   string `json:"kind"`
-	Amount int64  `json:"amount"`
-	Pot    int64  `json:"pot"`
-	ToAct  int    `json:"toAct"` // next seat to act, or -1
+	Seat       int    `json:"seat"`
+	Kind       string `json:"kind"`
+	Amount     int64  `json:"amount"`
+	Pot        int64  `json:"pot"`
+	ToAct      int    `json:"toAct"`      // next seat to act, or -1
+	CurrentBet int64  `json:"currentBet"` // highest committed this street
+	ToCall     int64  `json:"toCall"`     // chips the next actor must add to call (>=0)
+}
+
+// tableStatus tells clients whether the table is waiting for the host to start
+// the first hand, so a private room can render a start button.
+type tableStatus struct {
+	TableID        string `json:"tableId"`
+	WaitingForHost bool   `json:"waitingForHost"`
+	SeatedCount    int    `json:"seatedCount"`
 }
 
 // streetAdvanced is broadcast when the betting round moves to a new street.

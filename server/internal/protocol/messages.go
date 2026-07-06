@@ -30,7 +30,15 @@ const (
 	CmdPlaceBet  = "place_bet" // covers check/call/bet/raise via Action
 	CmdFold      = "fold"
 	CmdLeave     = "leave_table"
-	CmdResync    = "resync" // request a full snapshot after a detected Seq gap
+	CmdResync    = "resync"     // request a full snapshot after a detected Seq gap
+	CmdStartHand = "start_hand" // host-only: begin the first hand in a private room
+	CmdRebuy     = "rebuy"      // add chips between hands
+	CmdSitOut    = "sit_out"    // stop being dealt in
+	CmdSitIn     = "sit_in"     // resume being dealt in
+	// CmdDisconnected is an internal command the WS gateway submits to every
+	// table a connection had joined once its socket closes. It is never sent by
+	// a real client; it drives the disconnect-grace flow.
+	CmdDisconnected = "disconnected"
 )
 
 // PlaceBet is the imperative betting command. Kind mirrors engine.ActionKind.
@@ -43,14 +51,15 @@ type PlaceBet struct {
 // ---- Server -> client events ----
 
 const (
-	EvHandDealt  = "hand_dealt"
-	EvBetPlaced  = "bet_placed"
-	EvStreet     = "street_advanced"
-	EvShowdown   = "showdown"
-	EvSnapshot   = "table_snapshot"
-	EvSeatUpdate = "seat_update"
-	EvError      = "error"
-	EvFairReveal = "fair_reveal" // seed revealed after the hand, for verification
+	EvHandDealt   = "hand_dealt"
+	EvBetPlaced   = "bet_placed"
+	EvStreet      = "street_advanced"
+	EvShowdown    = "showdown"
+	EvSnapshot    = "table_snapshot"
+	EvSeatUpdate  = "seat_update"
+	EvError       = "error"
+	EvFairReveal  = "fair_reveal"  // seed revealed after the hand, for verification
+	EvTableStatus = "table_status" // waiting-for-host / seated-count, drives a start button
 )
 
 // HandDealt announces a new hand. Only the recipient's own hole cards are sent;

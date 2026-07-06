@@ -106,6 +106,9 @@ func runScript(t *testing.T) {
 	seatClient := map[int]*wsClient{0: a, 1: b, 2: c}
 	a.cmd(protocol.CmdSitDown, sitPayload(tableID, 0))
 	b.cmd(protocol.CmdSitDown, sitPayload(tableID, 1))
+	// Private rooms do not auto-start; the host (A, first to sit) deals the first
+	// hand explicitly. Thereafter hands auto-continue.
+	a.cmd(protocol.CmdStartHand, map[string]any{"tableId": tableID})
 	// Heads-up hand (h1) starts: A and B each get hand_dealt.
 	assertHandDealt(t, a, tableID, "-h1", 0)
 	assertHandDealt(t, b, tableID, "-h1", 1)

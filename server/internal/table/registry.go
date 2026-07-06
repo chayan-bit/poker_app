@@ -26,9 +26,13 @@ func NewRegistryWithDeps(deps Deps) *Registry {
 	return &Registry{byID: map[string]*Table{}, byCode: map[string]*Table{}, Deps: deps}
 }
 
-// Create registers and starts a new table using the registry's deps.
+// Create registers and starts a new table using the registry's deps. It wires
+// the table's idle-shutdown callback to Remove so a table that idles out also
+// drops out of the registry's indexes.
 func (r *Registry) Create(cfg Config) *Table {
-	t := New(cfg, r.Deps)
+	deps := r.Deps
+	deps.OnShutdown = r.Remove
+	t := New(cfg, deps)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.byID[cfg.ID] = t
@@ -36,6 +40,19 @@ func (r *Registry) Create(cfg Config) *Table {
 		r.byCode[cfg.JoinCode] = t
 	}
 	return t
+}
+
+// Remove drops a table from the registry's indexes. Safe to call from the
+// table's own goroutine (idle shutdown) - it takes only the registry lock.
+func (r *Registry) Remove(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if t, ok := r.byID[id]; ok {
+		delete(r.byID, id)
+		if t.Cfg.JoinCode != "" {
+			delete(r.byCode, t.Cfg.JoinCode)
+		}
+	}
 }
 
 // Get looks up a table by ID.

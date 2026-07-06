@@ -2,6 +2,7 @@ package table
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/chayan-bit/poker_app/server/internal/economy"
 	"github.com/chayan-bit/poker_app/server/internal/engine"
@@ -17,10 +18,22 @@ var actionKinds = map[string]engine.ActionKind{
 	"raise": engine.Raise,
 }
 
-// handleJoin subscribes a connection and sends it a full private-safe snapshot.
+// handleJoin subscribes a connection and sends it a personalized snapshot. If
+// the player is reclaiming a seat after a disconnect, its disconnected flag is
+// cleared and the personalized snapshot restores their own hole cards.
 func (t *Table) handleJoin(cmd Command) {
 	t.subs[cmd.PlayerID] = cmd.Reply
-	t.sendTo(cmd.Reply, protocol.EvSnapshot, t.snapshot())
+	if seat, ok := t.seatOf(cmd.PlayerID); ok {
+		s := t.seats[seat]
+		if s.disconnected {
+			s.disconnected = false
+			s.graceDeadline = time.Time{}
+			t.rearm()
+			t.broadcast(protocol.EvSeatUpdate, t.seatUpdate())
+		}
+	}
+	t.sendTo(cmd.Reply, protocol.EvSnapshot, t.snapshotFor(cmd.PlayerID))
+	t.refreshIdle()
 }
 
 // handleSitDown validates a buy-in, debits the ledger, seats the player, and
@@ -55,6 +68,11 @@ func (t *Table) handleSitDown(cmd Command) {
 	if _, ok := t.subs[cmd.PlayerID]; !ok {
 		t.subs[cmd.PlayerID] = cmd.Reply
 	}
+	// First player to sit becomes host if the lobby did not set one.
+	if t.Cfg.HostPlayerID == "" {
+		t.Cfg.HostPlayerID = cmd.PlayerID
+	}
+	t.refreshIdle()
 	t.broadcast(protocol.EvSeatUpdate, t.seatUpdate())
 	t.startHandIfReady()
 }
@@ -122,6 +140,8 @@ func (t *Table) handleLeave(cmd Command) {
 	delete(t.subs, cmd.PlayerID)
 	t.deps.Ledger.CashOut(cmd.PlayerID, cashOut)
 	t.broadcast(protocol.EvSeatUpdate, t.seatUpdate())
+	t.driveAutoFolds()
+	t.refreshIdle()
 }
 
 // foldSeat removes a leaving player from the live hand. If it is their turn the
@@ -138,6 +158,7 @@ func (t *Table) foldSeat(seat, idx int) {
 	t.Hand.Players[idx].Status = engine.Folded
 	t.broadcast(protocol.EvBetPlaced, betPlaced{
 		Seat: seat, Kind: "fold", Amount: 0, Pot: int64(t.Hand.Pot), ToAct: t.toActSeat(),
+		CurrentBet: t.currentBet(), ToCall: t.toCall(),
 	})
 	if done, _ := t.Hand.IsUncontested(); done {
 		t.Hand.Street = engine.Showdown
@@ -177,6 +198,7 @@ func (t *Table) applyAction(seat int, act engine.Action, kind string) error {
 	t.broadcast(protocol.EvBetPlaced, betPlaced{
 		Seat: seat, Kind: kind, Amount: int64(act.Amount),
 		Pot: int64(nh.Pot), ToAct: t.toActSeat(),
+		CurrentBet: t.currentBet(), ToCall: t.toCall(),
 	})
 
 	if nh.Street != prevStreet && nh.Street != engine.Showdown {
@@ -194,7 +216,54 @@ func (t *Table) applyAction(seat int, act engine.Action, kind string) error {
 	} else {
 		t.armTimer()
 	}
+	t.driveAutoFolds()
 	return nil
+}
+
+// driveAutoFolds folds any seat that requested sit_out mid-hand once action
+// reaches it. It re-enters applyAction, so a guard prevents unbounded recursion;
+// the outer loop chains consecutive auto-folds until the actor is a live player.
+func (t *Table) driveAutoFolds() {
+	if t.autoFolding {
+		return
+	}
+	t.autoFolding = true
+	defer func() { t.autoFolding = false }()
+	for t.Hand != nil && t.Hand.Street != engine.Showdown {
+		seat := t.toActSeat()
+		if seat < 0 {
+			return
+		}
+		s, ok := t.seats[seat]
+		if !ok || !s.foldPending {
+			return
+		}
+		if t.handIndex(seat) < 0 {
+			return
+		}
+		_ = t.applyAction(seat, engine.Action{SeatID: seat, Kind: engine.Fold}, "fold")
+	}
+}
+
+// currentBet is the highest committed on the current street, or 0 with no hand.
+func (t *Table) currentBet() int64 {
+	if t.Hand == nil || t.Hand.Street == engine.Showdown {
+		return 0
+	}
+	return int64(t.Hand.CurrentBet)
+}
+
+// toCall is the chips the seat now to act must add to call, floored at 0.
+func (t *Table) toCall() int64 {
+	if t.Hand == nil || t.Hand.Street == engine.Showdown {
+		return 0
+	}
+	p := t.Hand.Players[t.Hand.ToActPos]
+	d := int64(t.Hand.CurrentBet - p.Committed)
+	if d < 0 {
+		d = 0
+	}
+	return d
 }
 
 // onTurnTimeout auto-acts for the seat on the clock: check if legal, else fold,
@@ -216,12 +285,6 @@ func (t *Table) onTurnTimeout() {
 	_ = t.applyAction(seat, engine.Action{SeatID: seat, Kind: kind}, kindStr)
 }
 
-// armTimer sets the current actor's turn deadline.
-func (t *Table) armTimer() { t.timer.Reset(t.deps.TurnTimeout) }
-
-// stopTimer disarms the turn deadline (no hand in progress or hand ended).
-func (t *Table) stopTimer() { t.timer.Stop() }
-
 // toActSeat returns the seat currently to act, or -1 when no hand is running.
 func (t *Table) toActSeat() int {
 	if t.Hand == nil || t.Hand.Street == engine.Showdown {
@@ -230,14 +293,16 @@ func (t *Table) toActSeat() int {
 	return t.Hand.Players[t.Hand.ToActPos].SeatID
 }
 
-// snapshot builds the full public table view (no opponents' hole cards).
+// snapshot builds the full public table view (no players' hole cards).
 func (t *Table) snapshot() tableSnapshot {
 	snap := tableSnapshot{
-		TableID: t.Cfg.ID,
-		Seats:   t.seatViews(),
-		Button:  t.button,
-		ToAct:   t.toActSeat(),
-		Street:  "none",
+		TableID:    t.Cfg.ID,
+		Seats:      t.seatViews(),
+		Button:     t.button,
+		ToAct:      t.toActSeat(),
+		Street:     "none",
+		CurrentBet: t.currentBet(),
+		YourSeat:   -1,
 	}
 	if t.Hand != nil {
 		snap.HandRunning = true
@@ -246,6 +311,30 @@ func (t *Table) snapshot() tableSnapshot {
 		snap.Board = cardsToStrings(t.Hand.Board)
 		snap.Pot = int64(t.Hand.Pot)
 	}
+	return snap
+}
+
+// snapshotFor is a personalized snapshot: identical to snapshot but, when a hand
+// is running and playerID is dealt into it, includes that player's own hole
+// cards. This is the reclaim path (rejoin after a disconnect) and is safe for
+// any joiner: it only ever reveals the recipient's own cards.
+func (t *Table) snapshotFor(playerID string) tableSnapshot {
+	snap := t.snapshot()
+	seat, ok := t.seatOf(playerID)
+	if !ok || t.Hand == nil {
+		return snap
+	}
+	i := t.handIndex(seat)
+	if i < 0 {
+		return snap
+	}
+	p := t.Hand.Players[i]
+	if p.Status == engine.Folded {
+		snap.YourSeat = seat
+		return snap
+	}
+	snap.YourSeat = seat
+	snap.YourHole = []string{p.Hole[0].String(), p.Hole[1].String()}
 	return snap
 }
 
@@ -259,11 +348,15 @@ func (t *Table) seatUpdate() seatUpdate {
 func (t *Table) seatViews() []seatView {
 	out := make([]seatView, 0, len(t.seats))
 	for id, s := range t.seats {
-		v := seatView{Seat: id, PlayerID: s.playerID, Stack: int64(s.stack), SittingOut: s.sittingOut}
+		v := seatView{
+			Seat: id, PlayerID: s.playerID, Stack: int64(s.stack),
+			SittingOut: s.sittingOut, Disconnected: s.disconnected,
+		}
 		if t.Hand != nil {
 			if i := t.handIndex(id); i >= 0 {
 				v.Stack = int64(t.Hand.Players[i].Stack)
 				v.InHand = t.Hand.Players[i].Status != engine.Folded
+				v.Committed = int64(t.Hand.Players[i].Committed)
 			}
 		}
 		out = append(out, v)

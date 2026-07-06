@@ -34,6 +34,12 @@ func (t *Table) startHandIfReady() {
 	if len(eligible) < 2 {
 		return
 	}
+	// Private rooms wait for the host to deal the first hand; broadcast a status
+	// so the host's client can render a start button, then stop here.
+	if !t.autoStart() && !t.hostStarted {
+		t.broadcastStatus(true)
+		return
+	}
 
 	seed, err := fair.NewSeed()
 	if err != nil {
@@ -62,11 +68,34 @@ func (t *Table) startHandIfReady() {
 
 	t.button = eligible[buttonPos]
 	t.handNum++
+	t.evictBrokePlayers()
+	// A fresh hand carries no pending sit-out folds.
+	for _, s := range t.seats {
+		s.foldPending = false
+	}
 	t.handID = fmt.Sprintf("%s-h%d", t.Cfg.ID, t.handNum)
 	t.Hand = &hand
 	t.recordStart(eligible)
 	t.dealHoleCards()
 	t.armTimer()
+}
+
+// evictBrokePlayers auto-unseats any seat that has been broke (0 chips) for
+// brokeUnseatAfterHands hands since it went broke. Called at each hand start, so
+// the count only advances when hands actually deal. Broke seats are already
+// excluded from the deal (0 stack), so removing them does not affect this hand.
+func (t *Table) evictBrokePlayers() {
+	changed := false
+	for id, s := range t.seats {
+		if s.stack == 0 && s.brokeAtHand > 0 && t.handNum-s.brokeAtHand >= brokeUnseatAfterHands {
+			t.deps.Ledger.CashOut(s.playerID, 0) // nothing to return; keeps ledger symmetric
+			delete(t.seats, id)
+			changed = true
+		}
+	}
+	if changed {
+		t.broadcast(protocol.EvSeatUpdate, t.seatUpdate())
+	}
 }
 
 // buttonPos returns the index into eligible of the dealer button. It advances to
@@ -137,6 +166,12 @@ func (t *Table) settle() {
 	for _, p := range settled.Players {
 		if s, ok := t.seats[p.SeatID]; ok {
 			s.stack = p.Stack
+			// A busted seat is sat out immediately and starts its broke countdown
+			// toward auto-unseat (see evictBrokePlayers).
+			if p.Stack == 0 && s.brokeAtHand == 0 {
+				s.sittingOut = true
+				s.brokeAtHand = t.handNum
+			}
 		}
 	}
 

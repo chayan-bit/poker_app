@@ -25,8 +25,13 @@ const (
 	Private
 )
 
-// defaultTurnTimeout is the per-action deadline when Deps.TurnTimeout is zero.
-const defaultTurnTimeout = 20 * time.Second
+// Timeout defaults used when the matching Deps field is zero.
+const (
+	defaultTurnTimeout     = 20 * time.Second
+	defaultIdleTimeout     = 5 * time.Minute
+	defaultDisconnectGrace = 30 * time.Second
+	brokeUnseatAfterHands  = 3 // hands started while broke before auto-unseat
+)
 
 // Config is the host-chosen ruleset for a table (see Design_suite 6.2).
 type Config struct {
@@ -36,6 +41,13 @@ type Config struct {
 	SmallBlind engine.Chips
 	BigBlind   engine.Chips
 	JoinCode   string // 6-char code for private rooms
+	// AutoStart deals hands automatically once two seats are ready. Public tables
+	// are always auto-start; private rooms default to host-started (AutoStart
+	// false), where the host must send start_hand once before hands auto-continue.
+	AutoStart bool
+	// HostPlayerID is the private room's host. If empty, the first player to sit
+	// becomes host (the lobby may set it explicitly later).
+	HostPlayerID string
 	// Feature toggles (Design_suite 9): RunItTwice, BombPots, Straddles, etc.
 }
 
@@ -47,6 +59,15 @@ type Deps struct {
 	Now         func() time.Time
 	TurnTimeout time.Duration
 	Clock       Clock // timer factory; injected so turn deadlines are testable
+	// IdleTimeout is how long a table with 0 subscribers AND 0 seated players
+	// stays alive before it shuts down and removes itself from the registry.
+	IdleTimeout time.Duration
+	// DisconnectGrace is how long a seated player's socket may stay dropped
+	// before the seat is sat out (their turn timer still runs meanwhile).
+	DisconnectGrace time.Duration
+	// OnShutdown, if set, is invoked (from the table goroutine) with the table ID
+	// when the table shuts down on idle. The registry wires this to Remove.
+	OnShutdown func(tableID string)
 }
 
 // withDefaults fills any zero field with a production default so a table always
@@ -60,6 +81,12 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.TurnTimeout <= 0 {
 		d.TurnTimeout = defaultTurnTimeout
+	}
+	if d.IdleTimeout <= 0 {
+		d.IdleTimeout = defaultIdleTimeout
+	}
+	if d.DisconnectGrace <= 0 {
+		d.DisconnectGrace = defaultDisconnectGrace
 	}
 	if d.Ledger == nil {
 		d.Ledger = economy.NewLedger(economy.NewMemoryStore(), d.Now)
@@ -82,6 +109,17 @@ type seatState struct {
 	playerID   string
 	stack      engine.Chips // chips at the seat between hands
 	sittingOut bool         // excluded from the next deal (e.g. timed out)
+	// foldPending marks a seat that requested sit_out mid-hand while it was not
+	// their turn: they auto-fold when action reaches them (cleared each deal).
+	foldPending bool
+	// disconnected + graceDeadline drive the disconnect-grace flow. While
+	// disconnected the seat still runs the normal turn timer; if grace expires
+	// still disconnected the seat is sat out (not unseated).
+	disconnected  bool
+	graceDeadline time.Time
+	// brokeAtHand is the hand number at which this seat first hit 0 chips (0 when
+	// not broke). Used to auto-unseat after brokeUnseatAfterHands more hands.
+	brokeAtHand int
 }
 
 // Table is the live state. Only its own goroutine touches these fields.
@@ -90,7 +128,7 @@ type Table struct {
 	Hand *engine.HandState
 
 	deps  Deps
-	seats map[int]*seatState               // seatID -> seat state
+	seats map[int]*seatState // seatID -> seat state
 	subs  map[string]chan<- protocol.Envelope
 	inbox chan Command
 	seq   uint64
@@ -98,6 +136,19 @@ type Table struct {
 	timer   Timer
 	button  int // seat ID of the dealer button
 	handNum int
+
+	// hostStarted flips true after the first start_hand in a non-auto-start room;
+	// thereafter hands auto-continue.
+	hostStarted bool
+	// autoFolding guards driveAutoFolds against re-entrancy.
+	autoFolding bool
+
+	// deadlines the loop multiplexes onto its single timer (zero == disarmed).
+	turnDeadline time.Time
+	idleDeadline time.Time
+	// done is closed when loop() exits (idle shutdown), for deterministic tests.
+	done    chan struct{}
+	stopped bool
 
 	// per-running-hand fairness + recording state
 	commitment string
@@ -120,9 +171,24 @@ func New(cfg Config, deps Deps) *Table {
 		inbox:      make(chan Command, 64),
 		timer:      d.Clock.NewTimer(),
 		startStack: map[int]engine.Chips{},
+		done:       make(chan struct{}),
 	}
+	// A brand-new table has no subscribers or seats, so start the idle clock.
+	// Safe to arm before the goroutine starts: nothing else touches the timer yet.
+	t.refreshIdle()
 	go t.loop()
 	return t
+}
+
+// Done is closed once the table's loop has exited (idle shutdown). Tests use it
+// to assert the goroutine terminated.
+func (t *Table) Done() <-chan struct{} { return t.done }
+
+// autoStart reports whether hands deal automatically: always for public tables,
+// and for private rooms only once the host has started the first hand (or opted
+// in via Config.AutoStart).
+func (t *Table) autoStart() bool {
+	return t.Cfg.AutoStart || t.Cfg.Visibility == Public
 }
 
 // NewWithDefaults builds a table with all-default dependencies. Kept as a
@@ -135,6 +201,7 @@ func (t *Table) Submit(c Command) { t.inbox <- c }
 // loop is the single-threaded owner of table state. It multiplexes inbound
 // commands with turn-timer expiries so both mutate state on the one goroutine.
 func (t *Table) loop() {
+	defer close(t.done)
 	for {
 		select {
 		case cmd, ok := <-t.inbox:
@@ -143,7 +210,10 @@ func (t *Table) loop() {
 			}
 			t.handle(cmd)
 		case <-t.timer.C():
-			t.onTurnTimeout()
+			t.onTimer()
+		}
+		if t.stopped {
+			return
 		}
 	}
 }
@@ -158,9 +228,19 @@ func (t *Table) handle(cmd Command) {
 	case protocol.CmdPlaceBet:
 		t.handleBet(cmd)
 	case protocol.CmdResync:
-		t.sendTo(cmd.Reply, protocol.EvSnapshot, t.snapshot())
+		t.sendTo(cmd.Reply, protocol.EvSnapshot, t.snapshotFor(cmd.PlayerID))
 	case protocol.CmdLeave:
 		t.handleLeave(cmd)
+	case protocol.CmdStartHand:
+		t.handleStartHand(cmd)
+	case protocol.CmdRebuy:
+		t.handleRebuy(cmd)
+	case protocol.CmdSitOut:
+		t.handleSitOut(cmd)
+	case protocol.CmdSitIn:
+		t.handleSitIn(cmd)
+	case protocol.CmdDisconnected:
+		t.handleDisconnect(cmd)
 	}
 }
 
