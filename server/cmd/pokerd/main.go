@@ -15,7 +15,11 @@ import (
 	"time"
 
 	"github.com/chayan-bit/poker_app/server/internal/auth"
+	"github.com/chayan-bit/poker_app/server/internal/economy"
+	"github.com/chayan-bit/poker_app/server/internal/handsapi"
+	"github.com/chayan-bit/poker_app/server/internal/history"
 	"github.com/chayan-bit/poker_app/server/internal/lobby"
+	"github.com/chayan-bit/poker_app/server/internal/postgres"
 	"github.com/chayan-bit/poker_app/server/internal/table"
 	"github.com/chayan-bit/poker_app/server/internal/ws"
 )
@@ -23,11 +27,18 @@ import (
 func main() {
 	addr := envOr("POKERD_ADDR", ":8080")
 
-	reg := table.NewRegistry()
-	store := auth.NewMemStore()
-	authn := auth.NewAuthenticator(authSecret(), store)
-	gw := &ws.Gateway{Reg: reg, Auth: authn.FromRequest}
+	authStore, econStore, histStore := buildStores()
+
+	ledger := economy.NewLedger(econStore, time.Now)
+	reg := table.NewRegistryWithDeps(table.Deps{Ledger: ledger, History: histStore})
+	authn := auth.NewAuthenticator(authSecret(), authStore)
+	gw := &ws.Gateway{
+		Reg:            reg,
+		Auth:           wsAuth(authn),
+		AllowedOrigins: ws.OriginsFromEnv(os.Getenv("POKERD_ALLOWED_ORIGINS")),
+	}
 	lob := lobby.New(reg, authn.FromRequest)
+	hands := handsapi.New(histStore, authn.FromRequest)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -41,6 +52,7 @@ func main() {
 	mux.Handle("/api/rooms", lob.CreateRoom())
 	mux.Handle("/api/rooms/join", lob.JoinRoom())
 	mux.Handle("/api/quickseat", lob.Quickseat())
+	hands.Register(mux)
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -63,6 +75,40 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(ctx)
 	log.Print("pokerd stopped")
+}
+
+// buildStores returns persistent stores when POKERD_DATABASE_URL is set,
+// otherwise in-memory ones (dev mode: everything resets on restart).
+func buildStores() (auth.Store, economy.Store, history.Store) {
+	dsn := os.Getenv("POKERD_DATABASE_URL")
+	if dsn == "" {
+		log.Print("WARNING: POKERD_DATABASE_URL not set; using in-memory stores. " +
+			"Accounts, balances, and hand histories reset on restart.")
+		return auth.NewMemStore(), economy.NewMemoryStore(), history.NewMemStore()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	db, err := postgres.Connect(ctx, dsn)
+	if err != nil {
+		log.Fatalf("postgres connect: %v", err)
+	}
+	if err := db.Migrate(ctx); err != nil {
+		log.Fatalf("postgres migrate: %v", err)
+	}
+	log.Print("postgres connected, migrations applied")
+	return postgres.NewAuthStore(db), postgres.NewEconomyStore(db), postgres.NewHistoryStore(db)
+}
+
+// wsAuth adapts the authenticator for WebSocket handshakes: browsers cannot
+// set headers on WS connections, so a ?token= query parameter is accepted and
+// promoted to a bearer header before normal verification.
+func wsAuth(a *auth.Authenticator) func(*http.Request) (string, error) {
+	return func(r *http.Request) (string, error) {
+		if tok := r.URL.Query().Get("token"); tok != "" && r.Header.Get("Authorization") == "" {
+			r.Header.Set("Authorization", "Bearer "+tok)
+		}
+		return a.FromRequest(r)
+	}
 }
 
 func envOr(key, def string) string {
