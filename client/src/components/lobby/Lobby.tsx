@@ -1,6 +1,11 @@
-// Lobby. Public: cash tables + sit-and-gos by stake tier; the hero action is
-// one-tap Quick Seat. Private: create room / join by 6-char code. Plus the
-// friends panel. Framer Motion is allowed here (non-table chrome).
+// Lobby. Public: real cash tables from GET /api/tables + sit-and-gos, with a
+// one-tap Quick Seat hero (POST /api/quickseat at a chosen stake). Private:
+// create room / join by 6-char code (POST /api/rooms, /api/rooms/join). Plus
+// the friends panel. Framer Motion is allowed here (non-table chrome).
+//
+// Every table entry drives the app's existing navigation into the table:
+// nav("/table?join=<tableId>"). Every async surface (tables, quickseat, join,
+// sng) has loading / empty / error states surfaced inline - never as a modal.
 
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -8,34 +13,42 @@ import { motion } from "framer-motion";
 import { Screen, Card, Button, Input, SpadeMark, Wordmark, Icon } from "@/components/ui/kit";
 import { ChipStack } from "@/components/table/Chips";
 import { FriendsPanel } from "./FriendsPanel";
-import { listSNG, registerSNG, ApiError, type SngView } from "@/net/api";
+import {
+  listTables,
+  quickseat,
+  joinRoom,
+  listSNG,
+  registerSNG,
+  ApiError,
+  type PublicTable,
+  type SngView,
+} from "@/net/api";
 
 const CreateRoom = lazy(() => import("./CreateRoom"));
 const CreateSng = lazy(() => import("./CreateSng"));
 
-interface StakeTable {
-  id: string;
-  stake: string;
-  tier: "micro" | "low" | "mid" | "high";
-  seated: number;
-  max: number;
-  kind: "cash" | "sng";
-}
+// The only stakes quickseat will match on (server: lobby.quickseatBlinds).
+const QUICK_STAKES = [25, 50, 100, 500, 1000] as const;
 
-const TABLES: StakeTable[] = [
-  { id: "t1", stake: "1 / 2", tier: "micro", seated: 5, max: 6, kind: "cash" },
-  { id: "t2", stake: "2 / 5", tier: "low", seated: 8, max: 9, kind: "cash" },
-  { id: "t3", stake: "5 / 10", tier: "mid", seated: 3, max: 6, kind: "cash" },
-  { id: "t4", stake: "SNG · 10", tier: "micro", seated: 4, max: 9, kind: "sng" },
-  { id: "t5", stake: "SNG · 50", tier: "low", seated: 6, max: 9, kind: "sng" },
-];
+type Tier = "micro" | "low" | "mid" | "high";
 
-const TIER_COLOR: Record<StakeTable["tier"], string> = {
+const TIER_COLOR: Record<Tier, string> = {
   micro: "var(--action-blue)",
   low: "var(--success)",
   mid: "var(--gold)",
   high: "var(--danger)",
 };
+
+// Server does not expose a stake "tier"; derive one from the small blind so the
+// row accent stays meaningful without fabricating data.
+function tierFor(smallBlind: number): Tier {
+  if (smallBlind < 50) return "micro";
+  if (smallBlind < 500) return "low";
+  if (smallBlind < 1000) return "mid";
+  return "high";
+}
+
+type LoadState = "loading" | "ready" | "error";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 const rise = (delay: number) => ({
@@ -46,14 +59,44 @@ const rise = (delay: number) => ({
 
 export default function Lobby() {
   const nav = useNavigate();
+  const goToTable = (tableId: string) =>
+    nav(`/table?join=${encodeURIComponent(tableId)}`);
+
+  // ---- public tables ----
+  const [tables, setTables] = useState<PublicTable[]>([]);
+  const [tablesState, setTablesState] = useState<LoadState>("loading");
+  const [tablesError, setTablesError] = useState<string | null>(null);
+
+  // ---- quick seat ----
+  const [quickStake, setQuickStake] = useState<number>(QUICK_STAKES[0]);
+  const [seating, setSeating] = useState(false);
+  const [seatError, setSeatError] = useState<string | null>(null);
+
+  // ---- private ----
   const [code, setCode] = useState("");
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
+  // ---- sit-and-go ----
   const [sngs, setSngs] = useState<SngView[]>([]);
   const [sngListError, setSngListError] = useState<string | null>(null);
   const [creatingSng, setCreatingSng] = useState(false);
   const [registering, setRegistering] = useState<string | null>(null);
   const [registerError, setRegisterError] = useState<{ id: string; message: string } | null>(null);
+
+  const refreshTables = () => {
+    setTablesState("loading");
+    listTables()
+      .then((rows) => {
+        setTables(rows);
+        setTablesState("ready");
+      })
+      .catch((err) => {
+        setTablesError(err instanceof ApiError ? err.message : "Could not load tables.");
+        setTablesState("error");
+      });
+  };
 
   const refreshSngs = () => {
     listSNG()
@@ -67,8 +110,45 @@ export default function Lobby() {
   };
 
   useEffect(() => {
+    refreshTables();
     refreshSngs();
   }, []);
+
+  const seatMe = async () => {
+    setSeatError(null);
+    setSeating(true);
+    try {
+      const res = await quickseat(quickStake);
+      goToTable(res.tableId);
+    } catch (err) {
+      setSeatError(
+        err instanceof ApiError
+          ? `${err.message} (${err.code})`
+          : "Could not find a seat. Please try again.",
+      );
+    } finally {
+      setSeating(false);
+    }
+  };
+
+  const joinByCode = async () => {
+    setJoinError(null);
+    setJoining(true);
+    try {
+      const res = await joinRoom(code);
+      goToTable(res.tableId);
+    } catch (err) {
+      setJoinError(
+        err instanceof ApiError && err.code === "not_found"
+          ? "No room with that code."
+          : err instanceof ApiError
+            ? err.message
+            : "Could not join the room.",
+      );
+    } finally {
+      setJoining(false);
+    }
+  };
 
   const register = async (sngId: string) => {
     setRegisterError(null);
@@ -106,14 +186,10 @@ export default function Lobby() {
           </span>
           <Wordmark size={19} />
         </button>
+        {/* No chip-balance chip: the server exposes no balance/me endpoint yet
+            (economy.Ledger.Balance is internal-only), so a real value is not
+            available. We omit it rather than fabricate one. */}
         <div className="flex items-center gap-3">
-          <span
-            className="num flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold"
-            style={{ background: "var(--surface-3)", color: "var(--gold)", boxShadow: "inset 0 0 0 1px var(--line-hi)" }}
-          >
-            <span className="h-2 w-2 rounded-full" style={{ background: "var(--gold)" }} />
-            5,240
-          </span>
           <button
             onClick={() => nav("/friends")}
             className="grid h-9 w-9 place-items-center rounded-xl text-ink-dim no-tap-highlight"
@@ -154,8 +230,36 @@ export default function Lobby() {
           <p className="mt-1 max-w-sm text-sm text-ink-dim">
             We drop you into the best open seat at your stake, instantly.
           </p>
-          <Button variant="gold" className="mt-4" onClick={() => nav("/table")}>
-            Seat me now
+
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {QUICK_STAKES.map((stake) => {
+              const active = stake === quickStake;
+              return (
+                <button
+                  key={stake}
+                  onClick={() => setQuickStake(stake)}
+                  aria-pressed={active}
+                  className="num rounded-full px-3 py-1.5 text-sm font-semibold transition-transform duration-150 hover:-translate-y-[1px] no-tap-highlight"
+                  style={{
+                    background: active ? "var(--gold)" : "var(--surface-3)",
+                    color: active ? "#231704" : "var(--ink-dim)",
+                    boxShadow: active ? "var(--shadow-1)" : "inset 0 0 0 1px var(--line-hi)",
+                  }}
+                >
+                  {stake} / {stake * 2}
+                </button>
+              );
+            })}
+          </div>
+
+          {seatError && (
+            <p className="num mt-3 text-sm font-medium" style={{ color: "var(--danger)" }} role="alert">
+              {seatError}
+            </p>
+          )}
+
+          <Button variant="gold" className="mt-4" disabled={seating} onClick={() => void seatMe()}>
+            {seating ? "Finding a seat..." : "Seat me now"}
           </Button>
         </div>
       </motion.div>
@@ -163,28 +267,62 @@ export default function Lobby() {
       <div className="grid grid-cols-1 gap-5 md:grid-cols-[1.3fr_1fr]">
         {/* Public tables */}
         <motion.div className="flex flex-col gap-2.5" {...rise(0.12)}>
-          <SectionLabel>Public tables</SectionLabel>
-          {TABLES.map((t) => (
+          <div className="flex items-center justify-between">
+            <SectionLabel>Public tables</SectionLabel>
             <button
-              key={t.id}
-              onClick={() => nav("/table")}
-              className="card-edge group flex items-center justify-between rounded-xl px-4 py-3.5 text-left transition-transform duration-150 hover:-translate-y-[1px] no-tap-highlight"
+              onClick={refreshTables}
+              className="text-xs font-semibold uppercase tracking-wider text-ink-dim no-tap-highlight"
             >
-              <div className="flex items-center gap-3.5">
-                <span className="h-9 w-1.5 rounded-full" style={{ background: TIER_COLOR[t.tier] }} />
-                <div>
-                  <p className="num text-base font-semibold tracking-tight">{t.stake}</p>
-                  <p className="text-xs text-ink-faint">{t.kind === "cash" ? "Cash game" : "Sit & Go"}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <SeatDots seated={t.seated} max={t.max} />
-                <span className="num text-sm text-ink-dim">
-                  {t.seated}/{t.max}
-                </span>
-              </div>
+              Refresh
             </button>
-          ))}
+          </div>
+
+          {tablesState === "loading" && (
+            <Card>
+              <p className="text-sm text-ink-faint" role="status">Loading tables...</p>
+            </Card>
+          )}
+
+          {tablesState === "error" && (
+            <Card>
+              <div className="flex items-center justify-between gap-3">
+                <p className="num text-sm font-medium" style={{ color: "var(--danger)" }} role="alert">
+                  {tablesError}
+                </p>
+                <Button variant="ghost" className="min-h-0 px-3 py-1.5 text-sm" onClick={refreshTables}>
+                  Retry
+                </Button>
+              </div>
+            </Card>
+          )}
+
+          {tablesState === "ready" && tables.length === 0 && (
+            <Card>
+              <p className="text-sm text-ink-faint">
+                No public tables open. Use Quick Seat above to start one.
+              </p>
+            </Card>
+          )}
+
+          {tablesState === "ready" &&
+            tables.map((t) => (
+              <button
+                key={t.tableId}
+                onClick={() => goToTable(t.tableId)}
+                className="card-edge group flex items-center justify-between rounded-xl px-4 py-3.5 text-left transition-transform duration-150 hover:-translate-y-[1px] no-tap-highlight"
+              >
+                <div className="flex items-center gap-3.5">
+                  <span className="h-9 w-1.5 rounded-full" style={{ background: TIER_COLOR[tierFor(t.smallBlind)] }} />
+                  <div>
+                    <p className="num text-base font-semibold tracking-tight">
+                      {t.smallBlind} / {t.bigBlind}
+                    </p>
+                    <p className="text-xs text-ink-faint">Cash game</p>
+                  </div>
+                </div>
+                <span className="num text-sm text-ink-dim">Up to {t.maxSeats} seats</span>
+              </button>
+            ))}
         </motion.div>
 
         {/* Right rail */}
@@ -200,18 +338,29 @@ export default function Lobby() {
                   placeholder="6-CHAR CODE"
                   maxLength={6}
                   value={code}
-                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  onChange={(e) => {
+                    setCode(e.target.value.toUpperCase());
+                    if (joinError) setJoinError(null);
+                  }}
                   className="mono flex-1 uppercase"
                 />
-                <Button disabled={code.length !== 6} onClick={() => nav(`/table?join=${code}`)}>
-                  Join
+                <Button
+                  disabled={code.length !== 6 || joining}
+                  onClick={() => void joinByCode()}
+                >
+                  {joining ? "..." : "Join"}
                 </Button>
               </div>
+              {joinError && (
+                <p className="num text-sm font-medium" style={{ color: "var(--danger)" }} role="alert">
+                  {joinError}
+                </p>
+              )}
             </div>
           </Card>
 
           {creating && (
-            <Suspense fallback={<Card>Loading…</Card>}>
+            <Suspense fallback={<Card>Loading...</Card>}>
               <CreateRoom onClose={() => setCreating(false)} />
             </Suspense>
           )}
@@ -250,7 +399,7 @@ export default function Lobby() {
           </Card>
 
           {creatingSng && (
-            <Suspense fallback={<Card>Loading…</Card>}>
+            <Suspense fallback={<Card>Loading...</Card>}>
               <CreateSng
                 onClose={() => setCreatingSng(false)}
                 onCreated={() => {
@@ -309,7 +458,7 @@ function SngRow({
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{sng.name}</p>
           <p className="num text-xs text-ink-faint">
-            Buy-in {sng.buyIn.toLocaleString("en-US")} · {sng.registered}/{sng.seats} seated
+            Buy-in {sng.buyIn.toLocaleString("en-US")}, {sng.registered}/{sng.seats} seated
           </p>
         </div>
         <Button
@@ -318,7 +467,7 @@ function SngRow({
           disabled={busy || full}
           onClick={onRegister}
         >
-          {full ? "Full" : busy ? "Joining…" : "Register"}
+          {full ? "Full" : busy ? "Joining..." : "Register"}
         </Button>
       </div>
       {error && (
@@ -327,23 +476,5 @@ function SngRow({
         </p>
       )}
     </div>
-  );
-}
-
-// Compact presence dots: filled = seated, hairline = open.
-function SeatDots({ seated, max }: { seated: number; max: number }) {
-  return (
-    <span className="hidden items-center gap-1 sm:flex">
-      {Array.from({ length: max }).map((_, i) => (
-        <span
-          key={i}
-          className="h-1.5 w-1.5 rounded-full"
-          style={{
-            background: i < seated ? "var(--success)" : "transparent",
-            boxShadow: i < seated ? "none" : "inset 0 0 0 1px var(--line)",
-          }}
-        />
-      ))}
-    </span>
   );
 }

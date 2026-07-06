@@ -84,7 +84,7 @@ export default function CreateSng({
         )}
 
         <Button variant="gold" disabled={busy} onClick={submit}>
-          {busy ? "Creating…" : "Create sit & go"}
+          {busy ? "Creating..." : "Create sit & go"}
         </Button>
       </div>
     </Card>
