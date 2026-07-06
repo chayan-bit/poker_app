@@ -51,6 +51,14 @@ type HandState struct {
 	Pot       Chips
 	SmallBlind Chips
 	BigBlind  Chips
+
+	// acted[i] reports whether Players[i] has voluntarily acted since the last
+	// full bet/raise on the current street. Posting a blind is NOT acting, so
+	// the big blind still gets the option to check or raise on a limped pot. A
+	// full raise clears every flag (action reopens); an incomplete all-in raise
+	// does not, which enforces the standard "no re-raise" rule for seats that
+	// have already acted.
+	acted []bool
 }
 
 // ActionKind enumerates legal player actions.
@@ -99,23 +107,45 @@ func (h HandState) Apply(a Action) (HandState, error) {
 	switch a.Kind {
 	case Fold:
 		p.Status = Folded
+		next.acted[pi] = true
 	case Check:
 		if p.Committed != next.CurrentBet {
 			return h, ErrIllegalAction
 		}
+		next.acted[pi] = true
 	case Call:
 		pay := min(next.CurrentBet-p.Committed, p.Stack)
 		next.commit(pi, pay)
+		next.acted[pi] = true
 	case Bet, Raise:
-		if a.Amount > p.Committed+p.Stack {
+		toAmt := a.Amount
+		if toAmt <= next.CurrentBet {
+			return h, ErrBadAmount // a bet/raise must exceed the current bet
+		}
+		if toAmt > p.Committed+p.Stack {
 			return h, ErrBadAmount
 		}
-		if a.Amount < next.CurrentBet+next.MinRaise && a.Amount != p.Committed+p.Stack {
-			return h, ErrBadAmount // must raise by at least min-raise unless all-in
+		allIn := toAmt == p.Committed+p.Stack
+		fullRaise := toAmt >= next.CurrentBet+next.MinRaise
+		if !fullRaise && !allIn {
+			return h, ErrBadAmount // must raise by at least MinRaise unless all-in
 		}
-		next.MinRaise = a.Amount - next.CurrentBet
-		next.commit(pi, a.Amount-p.Committed)
-		next.CurrentBet = a.Amount
+		// Incomplete-raise rule: a seat that has already acted at the current
+		// bet level may not re-raise off an all-in that did not reopen action.
+		// A full raise clears the acted flags below, so this only bites when the
+		// last increase to CurrentBet was a short all-in.
+		if next.acted[pi] {
+			return h, ErrIllegalAction
+		}
+		next.commit(pi, toAmt-p.Committed)
+		if fullRaise {
+			next.MinRaise = toAmt - next.CurrentBet
+			for i := range next.acted {
+				next.acted[i] = false
+			}
+		}
+		next.CurrentBet = toAmt
+		next.acted[pi] = true
 	default:
 		return h, ErrIllegalAction
 	}
@@ -138,37 +168,68 @@ func (h *HandState) commit(pi int, amount Chips) {
 	}
 }
 
-// advance moves action to the next actor, or the next street if the round closed.
+// advance moves action to the next actor, or the next street once the current
+// betting round is closed. When only one player remains unfolded the hand ends
+// immediately (uncontested). When betting is closed but at most one player can
+// still act, the remaining streets are dealt out to showdown (all-in run-out).
 func (h *HandState) advance() {
-	if h.countActive() <= 1 {
+	if h.countNonFolded() <= 1 {
 		h.Street = Showdown
 		return
 	}
-	next := h.nextActor(h.ToActPos)
-	if next == -1 || h.roundClosed() {
-		h.nextStreet()
+	if nxt := h.nextToAct(h.ToActPos); nxt != -1 {
+		h.ToActPos = nxt
 		return
 	}
-	h.ToActPos = next
+	h.nextStreet()
 }
 
-// roundClosed reports whether every active player has matched CurrentBet.
-func (h *HandState) roundClosed() bool {
-	for i := range h.Players {
+// nextToAct returns the next seat (after from, in seat order) that still owes an
+// action this street: an Active seat that has either not matched CurrentBet or
+// not yet acted since the last full raise (the big-blind option case). Returns
+// -1 when the betting round is closed.
+func (h *HandState) nextToAct(from int) int {
+	n := len(h.Players)
+	for off := 1; off <= n; off++ {
+		i := (from + off) % n
 		p := h.Players[i]
-		if p.Status == Active && p.Committed != h.CurrentBet {
-			return false
+		if p.Status == Active && (p.Committed != h.CurrentBet || !h.acted[i]) {
+			return i
 		}
 	}
-	return true
+	return -1
 }
 
+// nextStreet resets per-street state and deals the next community cards. If no
+// more than one player can voluntarily act (everyone else is all-in), it runs
+// the board out to the river and lands on Showdown.
 func (h *HandState) nextStreet() {
+	runOut := h.countCanAct() <= 1
+	for {
+		h.resetStreet()
+		h.dealNextStreet()
+		if h.Street == Showdown {
+			return
+		}
+		if !runOut {
+			h.ToActPos = h.nextActor(h.ButtonPos)
+			return
+		}
+	}
+}
+
+// resetStreet clears per-street betting state.
+func (h *HandState) resetStreet() {
 	for i := range h.Players {
 		h.Players[i].Committed = 0
+		h.acted[i] = false
 	}
 	h.CurrentBet = 0
 	h.MinRaise = h.BigBlind
+}
+
+// dealNextStreet advances the Street enum and deals the board cards it needs.
+func (h *HandState) dealNextStreet() {
 	switch h.Street {
 	case Preflop:
 		h.Street = Flop
@@ -181,9 +242,25 @@ func (h *HandState) nextStreet() {
 		h.dealBoard(1)
 	case River:
 		h.Street = Showdown
-		return
 	}
-	h.ToActPos = h.nextActor(h.ButtonPos)
+}
+
+// IsUncontested reports whether exactly one player remains unfolded; if so it
+// returns that seat's ID (the sole winner). Note an all-in seat is still "in":
+// one Active plus one AllIn is contested and must be run out to showdown.
+func (h HandState) IsUncontested() (bool, int) {
+	count := 0
+	winner := -1
+	for _, p := range h.Players {
+		if p.Status == Active || p.Status == AllIn {
+			count++
+			winner = p.SeatID
+		}
+	}
+	if count == 1 {
+		return true, winner
+	}
+	return false, -1
 }
 
 func (h *HandState) dealBoard(n int) {
@@ -204,10 +281,22 @@ func (h *HandState) nextActor(from int) int {
 	return -1
 }
 
-func (h *HandState) countActive() int {
+// countNonFolded counts players still in the hand (Active or AllIn).
+func (h *HandState) countNonFolded() int {
 	c := 0
 	for _, p := range h.Players {
 		if p.Status == Active || p.Status == AllIn {
+			c++
+		}
+	}
+	return c
+}
+
+// countCanAct counts players who can still voluntarily act (Active with chips).
+func (h *HandState) countCanAct() int {
+	c := 0
+	for _, p := range h.Players {
+		if p.Status == Active {
 			c++
 		}
 	}
@@ -227,6 +316,7 @@ func (h HandState) clone() HandState {
 	c := h
 	c.Players = append([]Player(nil), h.Players...)
 	c.Board = append([]Card(nil), h.Board...)
+	c.acted = append([]bool(nil), h.acted...)
 	// Deck is treated read-only after deal; share the backing array.
 	return c
 }
