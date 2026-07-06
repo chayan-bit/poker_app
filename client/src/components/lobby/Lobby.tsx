@@ -272,6 +272,9 @@ export default function Lobby() {
         <button className="text-ink-dim underline-offset-4 hover:text-ink hover:underline" onClick={() => nav("/replay")}>
           Hand replayer
         </button>
+        <button className="text-ink-dim underline-offset-4 hover:text-ink hover:underline" onClick={() => nav("/history")}>
+          Hand history
+        </button>
       </div>
     </Screen>
   );

@@ -3,15 +3,20 @@
 // entirely client-side (SHA-256 in the browser).
 
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Screen, Card, Button, Field, Input } from "@/components/ui/kit";
 import { verifyCommitment } from "@/lib/sha";
 import { FAIR_FIXTURE } from "@/net/mockServer";
 
 export default function FairnessVerifier() {
   const nav = useNavigate();
-  const [seed, setSeed] = useState("");
-  const [commitment, setCommitment] = useState("");
+  // Deep links (hand history "Verify this hand") prefill via router state.
+  const prefill = (useLocation().state ?? {}) as {
+    seed?: string;
+    commitment?: string;
+  };
+  const [seed, setSeed] = useState(prefill.seed ?? "");
+  const [commitment, setCommitment] = useState(prefill.commitment ?? "");
   const [result, setResult] = useState<
     { ok: boolean; computed: string } | null
   >(null);

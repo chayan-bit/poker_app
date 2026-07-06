@@ -159,6 +159,9 @@ interface GameState {
   clearElimination: () => void;
   clearTourneyResult: () => void;
 
+  // ---- history / replay ----
+  loadReplayHand: (record: HandRecord) => void;
+
   // ---- fairness selectors ----
   getFairnessRecord: (handId: string) => FairnessRecord | undefined;
   getFairnessRecords: () => FairnessRecord[];
@@ -582,6 +585,16 @@ export const useGame = create<GameState>((set, get) => {
       set((s) => ({ tourney: { ...s.tourney, lastElimination: null } })),
     clearTourneyResult: () =>
       set((s) => ({ tourney: { ...s.tourney, result: null } })),
+
+    // Inject an externally fetched hand (history API) so HandReplayer, which
+    // reads only from the history slice, can replay it. Dedupes by handId.
+    loadReplayHand: (record) =>
+      set((s) => ({
+        history: [
+          record,
+          ...s.history.filter((h) => h.handId !== record.handId),
+        ].slice(0, 50),
+      })),
 
     getFairnessRecord: (handId) =>
       get().fairness.find((f) => f.handId === handId),

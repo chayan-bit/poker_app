@@ -211,30 +211,5 @@ export function registerSNG(sngId: string): Promise<RegisterSngResponse> {
   });
 }
 
-// ---- Hand history ----
-// NOTE: server-side routes for these were not found under server/cmd/pokerd
-// or server/internal/lobby at the time of writing (no "/api/hands" or
-// "/api/players/me/hands" registration in server/cmd/pokerd/main.go). Wired
-// here to the shapes described in the issue; will 404 against the current
-// server until those routes are added server-side.
-
-export interface HandHistoryEntry {
-  handId: string;
-  tableId: string;
-  board: string[];
-  playedAt: string;
-}
-
-/** GET /api/hands/{id}. */
-export function getHand(id: string): Promise<HandHistoryEntry> {
-  return request<HandHistoryEntry>(`/api/hands/${encodeURIComponent(id)}`, {
-    method: "GET",
-  });
-}
-
-/** GET /api/players/me/hands. */
-export function myHands(): Promise<HandHistoryEntry[]> {
-  return request<HandHistoryEntry[]>("/api/players/me/hands", {
-    method: "GET",
-  });
-}
+// Hand history API calls live in src/net/hands.ts (shapes mirror
+// server/internal/handsapi exactly).
