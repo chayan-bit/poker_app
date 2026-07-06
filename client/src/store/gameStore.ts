@@ -10,6 +10,7 @@
 import { create } from "zustand";
 import { WsClient, type ConnStatus, type NetTransport } from "@/net/client";
 import { MockServer } from "@/net/mockServer";
+import { verifyCommitment } from "@/lib/sha";
 import {
   Cmd,
   Ev,
@@ -20,6 +21,19 @@ import {
   type Street,
   type TableSnapshot,
 } from "@/net/protocol";
+
+/** How long an optimistic action may wait for a confirming bet_placed event
+ * before it's treated as lost and the client falls back to a resync. */
+const PENDING_ACTION_TIMEOUT_MS = 3000;
+
+export interface FairnessRecord {
+  handId: string;
+  commitment: string;
+  seed: string | null;
+  verified: true | false | "pending";
+}
+
+const MAX_FAIRNESS_RECORDS = 50;
 
 export interface PendingAction {
   kind: BetKind;
@@ -66,11 +80,26 @@ interface GameState {
   history: HandRecord[];
   reveals: Record<string, { commitment: string; seed: string }>;
 
+  // ---- fairness auto-verification ----
+  fairness: FairnessRecord[];
+
+  // ---- table status (waiting-for-host / seated-count banner) ----
+  tableStatus: { waitingForHost: boolean; seatedCount: number } | null;
+
   // ---- actions ----
-  connect: (opts: { url?: string; mock?: boolean }) => void;
+  connect: (opts: { url?: string; mock?: boolean; token?: string }) => void;
   disconnect: () => void;
   act: (kind: BetKind, amount: number) => void;
+  fold: () => void;
+  check: () => void;
+  call: () => void;
+  bet: (amount: number) => void;
+  raise: (amount: number) => void;
   clearError: () => void;
+
+  // ---- fairness selectors ----
+  getFairnessRecord: (handId: string) => FairnessRecord | undefined;
+  getFairnessRecords: () => FairnessRecord[];
 }
 
 const EMPTY_TABLE = {
@@ -173,7 +202,33 @@ export const useGame = create<GameState>((set, get) => {
             ...s.reveals,
             [d.handId]: { commitment: d.commitment, seed: d.seed },
           },
+          fairness: [
+            {
+              handId: d.handId,
+              commitment: d.commitment,
+              seed: d.seed,
+              verified: "pending" as const,
+            },
+            ...s.fairness,
+          ].slice(0, MAX_FAIRNESS_RECORDS),
         }));
+        void verifyCommitment(d.seed, d.commitment).then((result) => {
+          set((s) => ({
+            fairness: s.fairness.map((f) =>
+              f.handId === d.handId ? { ...f, verified: result.ok } : f,
+            ),
+          }));
+        });
+        break;
+      }
+      case Ev.TableStatus: {
+        const d = ev.data;
+        set({
+          tableStatus: {
+            waitingForHost: d.waitingForHost,
+            seatedCount: d.seatedCount,
+          },
+        });
         break;
       }
       case Ev.Error: {
@@ -234,8 +289,28 @@ export const useGame = create<GameState>((set, get) => {
     });
   }
 
+  // Guards the single in-flight optimistic action: if no confirming
+  // bet_placed / error arrives within PENDING_ACTION_TIMEOUT_MS, clear the
+  // preview and fall back to a resync rather than leave the UI stuck.
+  let pendingTimer: number | null = null;
+  function clearPendingTimer(): void {
+    if (pendingTimer !== null) {
+      window.clearTimeout(pendingTimer);
+      pendingTimer = null;
+    }
+  }
+
   const handlers = {
-    onEvent: applyEvent,
+    onEvent: (ev: ServerEvent) => {
+      if (
+        (ev.type === Ev.BetPlaced && ev.data.seat === get().yourSeat) ||
+        ev.type === Ev.Error ||
+        ev.type === Ev.Snapshot
+      ) {
+        clearPendingTimer();
+      }
+      applyEvent(ev);
+    },
     onStatus: (status: ConnStatus) => set({ status }),
     onGap: (lastGood: number) => {
       const { transport, tableId } = get();
@@ -258,15 +333,21 @@ export const useGame = create<GameState>((set, get) => {
     lastError: null,
     history: [],
     reveals: {},
+    fairness: [],
+    tableStatus: null,
 
-    connect: ({ url, mock }) => {
+    connect: ({ url, mock, token }) => {
       get().transport?.close();
+      clearPendingTimer();
       if (mock || !url) {
         const server = new MockServer(handlers);
         set({ transport: server, usingMock: true });
         server.connect();
       } else {
-        const client = new WsClient(url, handlers);
+        const client = new WsClient(url, handlers, {
+          token,
+          tableId: get().tableId ?? undefined,
+        });
         set({ transport: client, usingMock: false });
         client.connect();
       }
@@ -274,16 +355,19 @@ export const useGame = create<GameState>((set, get) => {
 
     disconnect: () => {
       get().transport?.close();
+      clearPendingTimer();
       set({ transport: null, status: "closed", ...EMPTY_TABLE });
     },
 
     act: (kind, amount) => {
-      const { transport, tableId, yourSeat, seats } = get();
+      const { transport, tableId, yourSeat } = get();
       if (!transport || !tableId || yourSeat === null) return;
+
+      const at = Date.now();
 
       // 1) Optimistic local preview (< 100ms, no spinner, no server wait).
       set((s) => ({
-        pending: { kind, amount, at: Date.now() },
+        pending: { kind, amount, at },
         seats: s.seats.map((seat) =>
           seat.seat === yourSeat
             ? { ...seat, lastAction: { kind, amount } }
@@ -300,9 +384,37 @@ export const useGame = create<GameState>((set, get) => {
         data: { tableId, kind, amount },
       });
 
-      void seats; // referenced for clarity that we read current seats above
+      // 3) Guard against a silently dropped confirmation: if nothing settles
+      //    this preview within the timeout, drop it and resync from the
+      //    server rather than trust a stale local guess.
+      clearPendingTimer();
+      pendingTimer = window.setTimeout(() => {
+        pendingTimer = null;
+        const cur = get();
+        if (cur.pending?.at !== at) return; // already resolved by a newer action
+        set((s) => ({
+          pending: null,
+          rollbackNonce: s.rollbackNonce + 1,
+        }));
+        if (cur.transport && cur.tableId) {
+          cur.transport.send({
+            type: Cmd.Resync,
+            data: { tableId: cur.tableId, haveSeq: 0 },
+          });
+        }
+      }, PENDING_ACTION_TIMEOUT_MS);
     },
 
+    fold: () => get().act("fold", 0),
+    check: () => get().act("check", 0),
+    call: () => get().act("call", 0),
+    bet: (amount) => get().act("bet", amount),
+    raise: (amount) => get().act("raise", amount),
+
     clearError: () => set({ lastError: null }),
+
+    getFairnessRecord: (handId) =>
+      get().fairness.find((f) => f.handId === handId),
+    getFairnessRecords: () => get().fairness,
   };
 });

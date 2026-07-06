@@ -26,6 +26,10 @@ export const Cmd = {
   PlaceBet: "place_bet",
   Leave: "leave_table",
   Resync: "resync",
+  StartHand: "start_hand",
+  Rebuy: "rebuy",
+  SitOut: "sit_out",
+  SitIn: "sit_in",
 } as const;
 export type CmdType = (typeof Cmd)[keyof typeof Cmd];
 
@@ -60,12 +64,35 @@ export interface ResyncCmd {
   haveSeq: number;
 }
 
+/** Host-only: starts the next hand once enough seats are filled. */
+export interface StartHandCmd {
+  tableId: string;
+}
+
+/** Tops a sitting-out-of-chips seat back up (subject to server-side rules). */
+export interface RebuyCmd {
+  tableId: string;
+  amount: number;
+}
+
+export interface SitOutCmd {
+  tableId: string;
+}
+
+export interface SitInCmd {
+  tableId: string;
+}
+
 export type Command =
   | { type: typeof Cmd.JoinTable; data: JoinTableCmd }
   | { type: typeof Cmd.SitDown; data: SitDownCmd }
   | { type: typeof Cmd.PlaceBet; data: PlaceBetCmd }
   | { type: typeof Cmd.Leave; data: LeaveCmd }
-  | { type: typeof Cmd.Resync; data: ResyncCmd };
+  | { type: typeof Cmd.Resync; data: ResyncCmd }
+  | { type: typeof Cmd.StartHand; data: StartHandCmd }
+  | { type: typeof Cmd.Rebuy; data: RebuyCmd }
+  | { type: typeof Cmd.SitOut; data: SitOutCmd }
+  | { type: typeof Cmd.SitIn; data: SitInCmd };
 
 // ---- Server -> client events (past tense, render-only) ----
 
@@ -78,6 +105,7 @@ export const Ev = {
   SeatUpdate: "seat_update",
   FairReveal: "fair_reveal",
   Error: "error",
+  TableStatus: "table_status",
 } as const;
 export type EvType = (typeof Ev)[keyof typeof Ev];
 
@@ -108,6 +136,10 @@ export interface BetPlaced {
   nextToAct: number;
   /** Server deadline (epoch ms) for the next actor, for the timebank ring. */
   actByMs?: number;
+  /** Total this seat has committed on the current street, if sent. */
+  currentBet?: number;
+  /** Chips still owed to call, if sent. */
+  toCall?: number;
 }
 
 export interface StreetAdvanced {
@@ -144,6 +176,8 @@ export interface SeatState {
   /** Last discrete action shown as a persistent chip-tag until next street. */
   lastAction?: { kind: BetKind; amount: number };
   connected: boolean;
+  /** Total chips this seat has committed on the current street, if sent. */
+  committed?: number;
 }
 
 /** Full authoritative snapshot; applied on join and after a resync. */
@@ -181,6 +215,14 @@ export interface ErrorEvent {
   message: string;
 }
 
+/** Broadcast when the table is waiting on more seats/host action, or that
+ * condition changes (e.g. seat count crosses the min-to-start threshold). */
+export interface TableStatus {
+  tableId: string;
+  waitingForHost: boolean;
+  seatedCount: number;
+}
+
 export type ServerEvent =
   | { type: typeof Ev.HandDealt; seq: number; data: HandDealt }
   | { type: typeof Ev.BetPlaced; seq: number; data: BetPlaced }
@@ -189,4 +231,5 @@ export type ServerEvent =
   | { type: typeof Ev.Snapshot; seq: number; data: TableSnapshot }
   | { type: typeof Ev.SeatUpdate; seq: number; data: SeatUpdate }
   | { type: typeof Ev.FairReveal; seq: number; data: FairReveal }
-  | { type: typeof Ev.Error; seq?: number; data: ErrorEvent };
+  | { type: typeof Ev.Error; seq?: number; data: ErrorEvent }
+  | { type: typeof Ev.TableStatus; seq: number; data: TableStatus };

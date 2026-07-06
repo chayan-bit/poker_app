@@ -104,6 +104,11 @@ export class MockServer implements NetTransport {
     this.after(2100, () =>
       this.emitStreetActor(0, nowMs() + 20_000),
     );
+
+    this.emit({
+      type: Ev.TableStatus,
+      data: { tableId: TABLE, waitingForHost: false, seatedCount: this.seats.length },
+    });
   }
 
   private pushSnapshot(nextToAct: number): void {
@@ -162,6 +167,7 @@ export class MockServer implements NetTransport {
       this.pot += amount;
     }
     s.lastAction = { kind, amount };
+    s.committed = kind === "fold" || kind === "check" ? s.committed ?? 0 : amount;
     this.seats = this.seats.map((x) => (x.seat === seatIdx ? s : x));
     this.emit({
       type: Ev.BetPlaced,
@@ -173,6 +179,8 @@ export class MockServer implements NetTransport {
         stack: s.stack,
         pot: this.pot,
         nextToAct: -1,
+        currentBet: s.committed,
+        toCall: BB,
       },
     });
   }
@@ -193,6 +201,7 @@ export class MockServer implements NetTransport {
     hero.stack -= committed;
     this.pot += committed;
     hero.lastAction = { kind, amount: kind === "call" ? BB : amount };
+    hero.committed = (hero.committed ?? 0) + committed;
     this.seats = this.seats.map((x) => (x.seat === this.seatHero ? hero : x));
 
     // Confirm the hero's action (this is what flips the pending flag off).
@@ -207,6 +216,8 @@ export class MockServer implements NetTransport {
           stack: hero.stack,
           pot: this.pot,
           nextToAct: 1,
+          currentBet: hero.committed,
+          toCall: 0,
         },
       }),
     );
@@ -227,8 +238,12 @@ export class MockServer implements NetTransport {
   private advance(street: TableSnapshot["street"], board: Card[]): void {
     this.street = street;
     this.board = board;
-    // Reset last-action chip-tags at street change.
-    this.seats = this.seats.map((s) => ({ ...s, lastAction: undefined }));
+    // Reset last-action chip-tags and per-street commitments at street change.
+    this.seats = this.seats.map((s) => ({
+      ...s,
+      lastAction: undefined,
+      committed: 0,
+    }));
     this.emit({
       type: Ev.StreetAdvanced,
       data: {
@@ -304,6 +319,7 @@ function seat(
     sittingOut: false,
     lastAction,
     connected: true,
+    committed: lastAction?.amount ?? 0,
   };
 }
 

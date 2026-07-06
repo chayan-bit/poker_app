@@ -7,8 +7,19 @@
 // The store subscribes to onEvent / onStatus. The socket is intentionally the
 // only place that touches WebSocket so the rest of the app stays testable and
 // the mock server can be swapped in behind the same interface.
+//
+// Auth note: the server's Authenticator.FromRequest (server/internal/auth/
+// auth.go ~L46-62) only reads an `Authorization: Bearer <token>` header or a
+// signed `guest` cookie - it does not read a query-string token today. The
+// browser WebSocket API cannot set custom headers on the handshake, so this
+// client sends the token as a `?token=` query param (the conventional
+// workaround). Until the server's ws.Gateway.Auth (server/internal/ws/
+// gateway.go:76, `g.Auth(r)`) is updated to also check `r.URL.Query().Get
+// ("token")`, real WS auth against the live server will fail with 401; this
+// is a server-side gap, not fixed here (server code is out of scope).
 
 import {
+  Cmd,
   PROTOCOL_VERSION,
   type Command,
   type Envelope,
@@ -29,7 +40,25 @@ export interface NetHandlers {
   onGap(lastGoodSeq: number): void;
 }
 
-const BACKOFF_MS = [250, 500, 1000, 2000, 4000] as const;
+export interface WsClientOptions {
+  /** Auth token appended as `?token=`. Omit for unauthenticated dev sockets. */
+  token?: string;
+  /** If set, join_table + resync are sent automatically on every (re)open. */
+  tableId?: string;
+}
+
+const BACKOFF_BASE_MS = 250;
+const BACKOFF_CAP_MS = 5000;
+
+/** Exponential backoff (base * 2^attempt) capped at BACKOFF_CAP_MS, with up to
+ * 20% jitter so many clients reconnecting after an outage don't sync-thunder
+ * the server. */
+function backoffDelay(attempt: number): number {
+  const raw = BACKOFF_BASE_MS * 2 ** attempt;
+  const capped = Math.min(raw, BACKOFF_CAP_MS);
+  const jitter = capped * 0.2 * Math.random();
+  return Math.round(capped - jitter / 2 + jitter * Math.random());
+}
 
 export class WsClient implements NetTransport {
   private ws: WebSocket | null = null;
@@ -37,25 +66,48 @@ export class WsClient implements NetTransport {
   private attempt = 0;
   private closedByUser = false;
   private queue: Command[] = [];
+  private tableId: string | undefined;
 
   constructor(
     private readonly url: string,
     private readonly handlers: NetHandlers,
-  ) {}
+    private readonly opts: WsClientOptions = {},
+  ) {
+    this.tableId = opts.tableId;
+  }
 
   connect(): void {
     this.closedByUser = false;
     this.open();
   }
 
+  private buildUrl(): string {
+    if (!this.opts.token) return this.url;
+    const sep = this.url.includes("?") ? "&" : "?";
+    return `${this.url}${sep}token=${encodeURIComponent(this.opts.token)}`;
+  }
+
   private open(): void {
     this.handlers.onStatus(this.attempt === 0 ? "connecting" : "reconnecting");
-    const ws = new WebSocket(this.url);
+    const ws = new WebSocket(this.buildUrl());
     this.ws = ws;
 
     ws.onopen = () => {
       this.attempt = 0;
       this.handlers.onStatus("open");
+      // On (re)open, rejoin the table and request a fresh snapshot before
+      // anything else, so a reconnect never leaves the client stuck on a
+      // stale view.
+      if (this.tableId) {
+        this.rawSend({
+          type: Cmd.JoinTable,
+          data: { tableId: this.tableId },
+        });
+        this.rawSend({
+          type: Cmd.Resync,
+          data: { tableId: this.tableId, haveSeq: this.lastSeq },
+        });
+      }
       // Flush anything queued while offline.
       const pending = this.queue.splice(0);
       for (const cmd of pending) this.rawSend(cmd);
@@ -76,9 +128,14 @@ export class WsClient implements NetTransport {
     };
   }
 
+  /** Lets the store tell the client which table to rejoin/resync on reopen. */
+  setTableId(tableId: string | undefined): void {
+    this.tableId = tableId;
+  }
+
   private scheduleReconnect(): void {
     this.handlers.onStatus("reconnecting");
-    const delay = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)];
+    const delay = backoffDelay(this.attempt);
     this.attempt += 1;
     window.setTimeout(() => {
       if (!this.closedByUser) this.open();
@@ -131,6 +188,7 @@ export class WsClient implements NetTransport {
   }
 
   send(cmd: Command): void {
+    if (cmd.type === Cmd.JoinTable) this.tableId = cmd.data.tableId;
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.rawSend(cmd);
     } else {
