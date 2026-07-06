@@ -9,6 +9,8 @@
 package table
 
 import (
+	"log"
+	"runtime/debug"
 	"time"
 
 	"github.com/chayan-bit/poker_app/server/internal/economy"
@@ -16,6 +18,10 @@ import (
 	"github.com/chayan-bit/poker_app/server/internal/history"
 	"github.com/chayan-bit/poker_app/server/internal/protocol"
 )
+
+// defaultDrainDeadline bounds how long Shutdown waits for a table's loop to
+// drain and exit before it gives up (the process is exiting regardless).
+const defaultDrainDeadline = 5 * time.Second
 
 // Visibility controls who may join.
 type Visibility uint8
@@ -161,6 +167,9 @@ type Table struct {
 	// done is closed when loop() exits (idle shutdown), for deterministic tests.
 	done    chan struct{}
 	stopped bool
+	// drainReq requests a graceful drain-shutdown from the loop goroutine (see
+	// Shutdown). Buffered so a single request never blocks the requester.
+	drainReq chan struct{}
 
 	// per-running-hand fairness + recording state
 	commitment string
@@ -184,6 +193,7 @@ func New(cfg Config, deps Deps) *Table {
 		timer:      d.Clock.NewTimer(),
 		startStack: map[int]engine.Chips{},
 		done:       make(chan struct{}),
+		drainReq:   make(chan struct{}, 1),
 	}
 	// Tournament tables pre-seat their registered players at the starting stack
 	// before the loop runs; the first hand deals once those players connect.
@@ -212,13 +222,51 @@ func (t *Table) autoStart() bool {
 // backward-compatible constructor for callers that do not wire deps.
 func NewWithDefaults(cfg Config) *Table { return New(cfg, Deps{}) }
 
-// Submit enqueues a command; non-blocking beyond the buffered inbox.
-func (t *Table) Submit(c Command) { t.inbox <- c }
+// Submit enqueues a command. It returns false when the table's loop has already
+// stopped (idle shutdown or drain), so a late Submit never blocks forever on a
+// channel with no reader. Callers should treat false as "table gone".
+func (t *Table) Submit(c Command) bool {
+	select {
+	case <-t.done:
+		return false
+	default:
+	}
+	select {
+	case t.inbox <- c:
+		return true
+	case <-t.done:
+		return false
+	}
+}
+
+// Shutdown requests a graceful drain of this table and blocks until the loop
+// exits or deadline elapses. The drain (run on the loop goroutine) aborts any
+// in-flight hand refunding committed chips, cashes out every cash-table seat's
+// stack to the durable ledger, and broadcasts server_shutdown. Idempotent: a
+// second call (or a call after idle shutdown) returns once the loop is done.
+func (t *Table) Shutdown(deadline time.Duration) {
+	if deadline <= 0 {
+		deadline = defaultDrainDeadline
+	}
+	select {
+	case t.drainReq <- struct{}{}:
+	case <-t.done:
+		return // already stopped; nothing to drain
+	}
+	select {
+	case <-t.done:
+	case <-time.After(deadline):
+		log.Printf("table %s: drain did not complete within %s", t.Cfg.ID, deadline)
+	}
+}
 
 // loop is the single-threaded owner of table state. It multiplexes inbound
 // commands with turn-timer expiries so both mutate state on the one goroutine.
+// A deferred recover keeps a panic in one table from crashing the process: the
+// faulted table is torn down cleanly and its clients notified.
 func (t *Table) loop() {
 	defer close(t.done)
+	defer t.recoverLoopPanic()
 	for {
 		select {
 		case cmd, ok := <-t.inbox:
@@ -228,11 +276,91 @@ func (t *Table) loop() {
 			t.handle(cmd)
 		case <-t.timer.C():
 			t.onTimer()
+		case <-t.drainReq:
+			t.drainShutdown()
+			return
 		}
 		if t.stopped {
 			return
 		}
 	}
+}
+
+// recoverLoopPanic is the deferred last line of defense for the loop goroutine.
+// It logs the panic with the table id and stack, best-effort notifies seated
+// clients, and removes the failed table from the registry so the rest of the
+// process survives.
+func (t *Table) recoverLoopPanic() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	log.Printf("table %s: PANIC in loop, tearing down: %v\n%s", t.Cfg.ID, r, debug.Stack())
+	// Never let panic-handling itself panic (e.g. a broadcast on broken state).
+	func() {
+		defer func() { _ = recover() }()
+		t.broadcast(protocol.EvTableError, protocol.TableError{
+			TableID: t.Cfg.ID,
+			Code:    "table_failed",
+			Message: "table hit an internal error and was closed",
+		})
+	}()
+	if t.deps.OnShutdown != nil {
+		func() {
+			defer func() { _ = recover() }()
+			t.deps.OnShutdown(t.Cfg.ID)
+		}()
+	}
+}
+
+// drainShutdown runs on the loop goroutine to gracefully close the table: abort
+// any in-flight hand (refunding committed chips to their stacks), cash out every
+// cash-table seat's remaining stack to the durable ledger, and tell clients the
+// server is going away. Tournament chips are NOT ledger balances (the buy-in was
+// collected by the tourney manager, which refunds it on shutdown), so tournament
+// seats are only voided, never cashed out.
+func (t *Table) drainShutdown() {
+	t.timer.Stop()
+	if t.Hand != nil {
+		t.voidHand()
+	}
+	if t.Cfg.Tournament == nil {
+		for _, s := range t.seats {
+			if s.stack > 0 {
+				t.deps.Ledger.CashOut(s.playerID, s.stack)
+			}
+			s.stack = 0 // idempotent: a re-drain cannot double-credit
+		}
+	}
+	t.broadcast(protocol.EvServerShutdown, protocol.ServerShutdown{
+		TableID: t.Cfg.ID,
+		Reason:  "server_shutdown",
+	})
+	t.stopped = true
+}
+
+// voidHand aborts the in-flight hand and returns every committed chip to the
+// stack it came from, resetting the table to the between-hands state. Committed
+// chips are returned by restoring each dealt seat's stack to its hand-start
+// snapshot, which by construction equals "current stack + everything this seat
+// put in the pot", so chips are conserved exactly. It is the recovery path for
+// both server shutdown and a settle failure (see settle). No-op with no hand.
+func (t *Table) voidHand() {
+	if t.Hand == nil {
+		return
+	}
+	for seat, start := range t.startStack {
+		if s, ok := t.seats[seat]; ok {
+			s.stack = start
+		}
+	}
+	t.Hand = nil
+	t.rec = nil
+	t.commitment = ""
+	t.seedHex = ""
+	t.handID = ""
+	t.startStack = map[int]engine.Chips{}
+	t.broadcast(protocol.EvSeatUpdate, t.seatUpdate())
 }
 
 // handle dispatches one inbound command.

@@ -21,6 +21,15 @@ type Registry interface {
 	Public() []table.Config
 }
 
+// creatorLimiter is an optional capability a Registry may implement to cap how
+// many live tables one creator owns. table.Registry satisfies it; test fakes
+// need not, so the cap is simply not enforced against them. Kept as an optional
+// interface (checked via type assertion) so the core Registry interface stays
+// minimal.
+type creatorLimiter interface {
+	CanCreateFor(playerID string) bool
+}
+
 // AuthFunc resolves the caller's identity from the request, exactly like
 // (*auth.Authenticator).FromRequest.
 type AuthFunc func(*http.Request) (string, error)

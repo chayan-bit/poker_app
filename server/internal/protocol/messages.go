@@ -65,7 +65,31 @@ const (
 	EvBlindsUp      = "blinds_up"       // a blind level elapsed; blinds raised at hand start
 	EvElimination   = "elimination"     // a seat busted (0 chips) and was removed
 	EvTourneyResult = "tourney_result"  // tournament over: final places and prizes
+	// EvServerShutdown tells clients the server is draining and the table is being
+	// closed cleanly: any in-flight hand was aborted and seated stacks refunded to
+	// the durable balance. Clients should show a reconnect state, not an error.
+	EvServerShutdown = "server_shutdown"
+	// EvTableError tells clients this single table hit an unrecoverable fault (a
+	// panic in its loop, or a settle failure) and was torn down. Other tables and
+	// the process keep running; the client should leave and rejoin/relist.
+	EvTableError = "table_error"
 )
+
+// ServerShutdown is broadcast to a table's clients when the server drains it on
+// shutdown. Reason is a stable machine code (currently always "server_shutdown").
+type ServerShutdown struct {
+	TableID string `json:"tableId"`
+	Reason  string `json:"reason"`
+}
+
+// TableError is broadcast when a single table is torn down after an
+// unrecoverable fault. Code is a stable machine code; Message is human-readable
+// and never leaks internals.
+type TableError struct {
+	TableID string `json:"tableId"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
 
 // BlindsUp announces that the blind clock advanced to a new level, applied at
 // the start of the hand that follows (never mid-hand).

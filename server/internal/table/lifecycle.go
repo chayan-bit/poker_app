@@ -2,6 +2,7 @@ package table
 
 import (
 	"fmt"
+	"log"
 	"sort"
 
 	"github.com/chayan-bit/poker_app/server/internal/engine"
@@ -169,6 +170,19 @@ func (t *Table) settle() {
 	t.stopTimer()
 	settled, err := engine.Settle(*t.Hand)
 	if err != nil {
+		// A settle failure would otherwise wedge the table mid-hand with chips
+		// locked in the pot forever. Recover to a safe state: void the hand
+		// (refunding every committed chip to its stack), tell clients, and try to
+		// deal the next hand rather than stall.
+		log.Printf("table %s: settle failed on hand %s, voiding to recover: %v", t.Cfg.ID, t.handID, err)
+		t.voidHand()
+		t.broadcast(protocol.EvTableError, protocol.TableError{
+			TableID: t.Cfg.ID,
+			Code:    "settle_failed",
+			Message: "the hand could not be settled and was voided; chips were returned",
+		})
+		t.rotateButton()
+		t.startHandIfReady()
 		return
 	}
 

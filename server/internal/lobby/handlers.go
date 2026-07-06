@@ -68,7 +68,15 @@ func (l *Lobby) CreateRoom() http.HandlerFunc {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
 			return
 		}
-		if _, ok := l.requireAuth(w, r); !ok {
+		creator, ok := l.requireAuth(w, r)
+		if !ok {
+			return
+		}
+		// Bound how many live rooms one creator may own, so a single caller cannot
+		// spin up unbounded tables (and their goroutines). Best-effort soft cap.
+		if cl, ok := l.reg.(creatorLimiter); ok && !cl.CanCreateFor(creator) {
+			writeError(w, http.StatusTooManyRequests, "too_many_tables",
+				"you already have the maximum number of open rooms")
 			return
 		}
 
@@ -108,6 +116,10 @@ func (l *Lobby) CreateRoom() http.HandlerFunc {
 			SmallBlind: req.SmallBlind,
 			BigBlind:   req.BigBlind,
 			JoinCode:   code,
+			// Pin the authenticated creator as host so host-gated actions (start)
+			// are correctly authorized. Without this the first player to sit would
+			// silently become host (issue: createroom-host-race).
+			HostPlayerID: creator,
 		})
 
 		writeJSON(w, http.StatusOK, createRoomResponse{

@@ -42,6 +42,12 @@ type SNG struct {
 
 	now func() time.Time
 
+	// createdAt and completedAt drive reaping (see Manager.reap): an SNG that
+	// never fills is torn down (and its registrants refunded) after it has been
+	// open too long, and a finished SNG is dropped after a short grace period.
+	createdAt   time.Time
+	completedAt time.Time
+
 	status     Status
 	registered []string     // playerIDs, in registration (seat) order
 	prizePool  engine.Chips // sum of buy-ins collected
@@ -141,6 +147,7 @@ func (s *SNG) onHandComplete(standings []table.SeatResult) table.TourneyDirectiv
 	if len(alive) <= 1 {
 		d.Done = true
 		s.status = Complete
+		s.completedAt = s.now()
 		if len(alive) == 1 {
 			w := alive[0]
 			s.finishers = append(s.finishers, finisher{w.PlayerID, 1, 0, w.StartStack})

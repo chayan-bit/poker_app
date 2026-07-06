@@ -34,6 +34,14 @@ var (
 	ErrAlreadyRegistered = errors.New("tourney: player already registered")
 )
 
+// Reaping TTLs bound how long dead sit-and-gos linger in memory. A never-filled
+// (still Registering) SNG is torn down after registerTTL, refunding its
+// registrants; a finished (Complete) SNG is dropped after completeTTL.
+const (
+	registerTTL = 1 * time.Hour
+	completeTTL = 10 * time.Minute
+)
+
 // Manager owns all live sit-and-gos and their creation/registration.
 type Manager struct {
 	mu      sync.Mutex
@@ -72,23 +80,74 @@ func (m *Manager) Create(cfg SNGConfig) (sngID, tableID string, err error) {
 		return "", "", err
 	}
 	s := &SNG{
-		ID:      sid,
-		TableID: tid,
-		Cfg:     cfg,
-		now:     m.now,
-		status:  Registering,
-		ledger:  m.ledger,
+		ID:        sid,
+		TableID:   tid,
+		Cfg:       cfg,
+		now:       m.now,
+		status:    Registering,
+		ledger:    m.ledger,
+		createdAt: m.now(),
 	}
+	m.reap()
 	m.mu.Lock()
 	m.sngs[sid] = s
 	m.mu.Unlock()
 	return sid, tid, nil
 }
 
+// reap removes dead sit-and-gos so the registry does not grow unboundedly: a
+// never-filled Registering SNG past registerTTL is torn down and its collected
+// buy-ins refunded, and a Complete SNG past completeTTL is dropped (its prizes
+// were already paid). Called opportunistically from Create/Register/List.
+func (m *Manager) reap() {
+	now := m.now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, s := range m.sngs {
+		s.mu.Lock()
+		switch s.status {
+		case Registering:
+			if now.Sub(s.createdAt) > registerTTL {
+				for _, pid := range s.registered {
+					s.ledger.Credit(pid, s.Cfg.BuyIn)
+				}
+				s.registered = nil
+				delete(m.sngs, id)
+			}
+		case Complete:
+			if !s.completedAt.IsZero() && now.Sub(s.completedAt) > completeTTL {
+				delete(m.sngs, id)
+			}
+		}
+		s.mu.Unlock()
+	}
+}
+
+// Shutdown refunds the collected buy-ins of every sit-and-go that has not paid
+// out yet (Registering or Running) and clears the registry. Wire it into
+// process shutdown so a restart does not strand players' buy-ins. Complete
+// sit-and-gos already paid their prizes and are only dropped. Idempotent.
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, s := range m.sngs {
+		s.mu.Lock()
+		if s.status != Complete {
+			for _, pid := range s.registered {
+				s.ledger.Credit(pid, s.Cfg.BuyIn)
+			}
+			s.registered = nil
+		}
+		s.mu.Unlock()
+		delete(m.sngs, id)
+	}
+}
+
 // Register signs playerID up for the sit-and-go, collecting the buy-in. When the
 // final seat registers, the tournament auto-starts (its table is created). It
 // returns economy.ErrInsufficientFunds when the ledger rejects the buy-in.
 func (m *Manager) Register(sngID, playerID string) error {
+	m.reap()
 	m.mu.Lock()
 	s, ok := m.sngs[sngID]
 	m.mu.Unlock()
@@ -146,6 +205,7 @@ func (s *SNG) autoStart(factory TableFactory) {
 // List returns every sit-and-go still open for registration, most-recent id
 // order stable across calls.
 func (m *Manager) List() []View {
+	m.reap()
 	m.mu.Lock()
 	snapshot := make([]*SNG, 0, len(m.sngs))
 	for _, s := range m.sngs {
