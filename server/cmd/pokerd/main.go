@@ -15,8 +15,9 @@ import (
 	"time"
 
 	"github.com/chayan-bit/poker_app/server/internal/auth"
-	"github.com/chayan-bit/poker_app/server/internal/ws"
+	"github.com/chayan-bit/poker_app/server/internal/lobby"
 	"github.com/chayan-bit/poker_app/server/internal/table"
+	"github.com/chayan-bit/poker_app/server/internal/ws"
 )
 
 func main() {
@@ -26,6 +27,7 @@ func main() {
 	store := auth.NewMemStore()
 	authn := auth.NewAuthenticator(authSecret(), store)
 	gw := &ws.Gateway{Reg: reg, Auth: authn.FromRequest}
+	lob := lobby.New(reg, authn.FromRequest)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -35,7 +37,10 @@ func main() {
 	mux.Handle("/ws", gw.Handler())
 	mux.Handle("/api/auth/guest", authn.GuestHandler())
 	mux.Handle("/api/auth/upgrade", authn.UpgradeHandler())
-	// TODO: REST lobby endpoints (list public tables, create private room).
+	mux.Handle("/api/tables", lob.ListTables())
+	mux.Handle("/api/rooms", lob.CreateRoom())
+	mux.Handle("/api/rooms/join", lob.JoinRoom())
+	mux.Handle("/api/quickseat", lob.Quickseat())
 
 	srv := &http.Server{
 		Addr:              addr,
