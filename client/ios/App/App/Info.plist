@@ -45,5 +45,37 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- Nearby (offline) play uses LAN-only WebRTC data channels between devices
+	     on the same Wi-Fi. iOS requires this string or mDNS/local peers never
+	     resolve and the connection silently fails. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Felt uses your local network to find and connect to friends' devices nearby so you can play at the same table without an internet connection. No data leaves your local network.</string>
+	<!-- Bonjour service types advertised/browsed for nearby peer discovery.
+	     PLACEHOLDER: confirm the exact service type the nearby module registers
+	     before store submission (see MOBILE.md). -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_felt._tcp</string>
+		<string>_felt._udp</string>
+	</array>
+	<!-- Nearby mode adds QR-code scanning to join a table by pointing the camera
+	     at a friend's code. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Felt uses the camera to scan a QR code to join a nearby table.</string>
+	<!-- Custom URL scheme so felt://t/&lt;joinCode&gt; deep links open the app and
+	     route into the join flow (handled via @capacitor/app appUrlOpen).
+	     Universal Links over https require an Associated Domains entitlement;
+	     see MOBILE.md. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.felt.poker</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>felt</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

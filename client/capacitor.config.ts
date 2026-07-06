@@ -23,6 +23,12 @@ const config: CapacitorConfig = {
       splashFullScreen: true,
       splashImmersive: true,
     },
+    // Resize the WebView body when the soft keyboard opens so inputs on the
+    // auth/table layouts are never covered. Runtime status-bar styling and the
+    // resize mode are also (re)applied from App.tsx on native startup.
+    Keyboard: {
+      resize: "native",
+    },
   },
 };
 

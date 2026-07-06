@@ -6,9 +6,22 @@ The web client is authoritative for all UI; the native shells only host the WebV
 ## App identity
 
 The `appId` in `capacitor.config.ts` is `com.felt.poker`, a PLACEHOLDER.
-Change it to the reverse-DNS bundle id you actually own before any store upload.
+CONFIRM this value before store submission: change it to the reverse-DNS bundle id
+you actually own (Apple App ID / Android `applicationId`).
 Changing `appId` after the fact means regenerating `ios/` and `android/`.
-The `appName` is `Felt`.
+The `appName` is `Felt`; `webDir` is `dist` (Vite output).
+Android `applicationId`/`namespace` is `com.felt.poker` (in `android/app/build.gradle`);
+iOS bundle id is set in Xcode signing. Keep all three in sync with `appId`.
+
+## Platform targets (store minimums)
+
+- Android: `compileSdkVersion`/`targetSdkVersion` are `35` (Google Play minimum),
+  `minSdkVersion` `22`, in `android/variables.gradle`. `versionCode 1` /
+  `versionName "1.0.0"` in `android/app/build.gradle` - bump per release.
+- iOS: deployment target and version/build come from the Xcode project + signing.
+- Capacitor 6 (`@capacitor/*` v6). Native plugins used at runtime:
+  `@capacitor/app` (back button + deep links), `@capacitor/status-bar`,
+  `@capacitor/keyboard`, `@capacitor/splash-screen`.
 
 ## How the packaged app finds the server
 
@@ -25,6 +38,13 @@ VITE_API_URL="https://api.yourdomain.com" \
 VITE_WS_URL="wss://api.yourdomain.com/ws" \
 npm run build && npx cap sync
 ```
+
+If `VITE_API_URL` is unset in a NATIVE build, the app no longer silently falls
+back to `http://localhost:8080` (which would ship a dead store binary). Instead
+`src/net/api.ts` throws a clear `misconfigured_api_url` error on the first REST
+call, surfaced to the user as a "no server configured - please refresh" banner.
+The localhost default is retained for web dev only. So: a release build with no
+`VITE_API_URL` fails loudly and visibly rather than appearing to hang.
 
 ## Why cleartext localhost is dev-only
 
@@ -53,23 +73,69 @@ monogram, gold `#D4A64A` on `#0B0F14`) via `@capacitor/assets` into both native
 projects. To regenerate, see `resources/README.md`.
 The splash background is also set in `capacitor.config.ts` (`SplashScreen.backgroundColor`).
 
+## Native lifecycle integrations (wired in `src/App.tsx`)
+
+All guarded by `Capacitor.isNativePlatform()`, so web is unaffected:
+
+- Status bar: `StatusBar.setStyle({ style: Style.Dark })` (light content over the
+  near-black `#0B0F14` surface) on both platforms; Android also sets the bar
+  background to `#0B0F14`.
+- Keyboard: `Keyboard.setResizeMode({ mode: Native })` at startup, plus
+  `plugins.Keyboard.resize: "native"` in `capacitor.config.ts`, so the soft
+  keyboard resizes the WebView and never covers auth/table inputs.
+- Android back button: integrated via `App.addListener('backButton', ...)`.
+  Back navigates within the router; leaving a LIVE table prompts a confirm and
+  releases the seat (`leave_table` then disconnect); at the root the app exits.
+  Without this, hardware/gesture back would pop a live table with no warning.
+
+## Permissions and usage strings
+
+iOS (`ios/App/App/Info.plist`):
+- `NSLocalNetworkUsageDescription` - required for nearby LAN-only WebRTC; without
+  it mDNS/local peers never resolve and the data channel silently fails.
+- `NSBonjourServices` - `_felt._tcp` / `_felt._udp` PLACEHOLDER service types.
+  Confirm the exact type the nearby module registers before submission.
+- `NSCameraUsageDescription` - QR-code scanning to join a nearby table.
+- `CFBundleURLTypes` - custom scheme `felt://` for deep links.
+
+Android (`android/app/src/main/AndroidManifest.xml`):
+- `INTERNET`, `ACCESS_NETWORK_STATE`.
+- `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`, `NEARBY_WIFI_DEVICES`
+  (`neverForLocation`) - nearby LAN WebRTC + mDNS discovery.
+- `CAMERA` (with `uses-feature ... required="false"`) - QR scanning.
+
+## Deep links (`/t/:joinCode`)
+
+An incoming join URL routes into the join flow via `App.addListener('appUrlOpen')`
+in `src/App.tsx` (`joinPathFromUrl` extracts `/t/<code>`).
+
+- Custom scheme `felt://t/<code>` works out of the box: registered in `Info.plist`
+  (`CFBundleURLTypes`) and `AndroidManifest.xml` (VIEW intent-filter).
+- Verified https links (Universal Links / App Links) need a domain you control:
+  - Android: replace the PLACEHOLDER host `links.felt.app` in the `autoVerify`
+    intent-filter and serve `/.well-known/assetlinks.json`.
+  - iOS: add an Associated Domains entitlement (`applinks:links.felt.app`) in
+    Xcode and serve `/.well-known/apple-app-site-association`. PLACEHOLDER domain.
+
 ## Store-packaging checklist
 
 Done:
-- Capacitor iOS project under `ios/` (CocoaPods installed).
-- Capacitor Android project under `android/`.
+- Capacitor 6 iOS project under `ios/` (CocoaPods installed) and Android under `android/`.
+- Android `targetSdk`/`compileSdk` bumped to 35 (Play minimum).
 - App icons (all densities) and splash screens (light + dark) in both projects.
 - Splash background color wired via `@capacitor/splash-screen` config.
 - Viewport meta: `viewport-fit=cover`, `user-scalable=no`, theme-color `#0B0F14`.
+- Native status-bar/keyboard/back-button/deep-link wiring (see above).
+- Permission usage strings for nearby (local network + camera).
 
 Not done (requires a human with signing identities and store accounts):
-- Set the real `appId` / bundle id and app display name for each store.
+- Confirm/replace the real `appId` / bundle id and display name for each store.
+- Replace the PLACEHOLDER deep-link domains and Bonjour service types, and publish
+  the App Links / Universal Links association files.
 - iOS: Apple Developer account, App ID, provisioning profiles, signing team in Xcode,
-  version/build numbers, App Store Connect listing, screenshots, privacy manifest.
-- Android: `applicationId`, upload keystore + `signingConfig` (do NOT commit the keystore),
-  `versionCode`/`versionName`, Play Console listing, screenshots, data-safety form.
-- Push/status-bar theming beyond splash: a `@capacitor/status-bar` runtime call
-  (set style/overlay) would live in `src/main.tsx`; deferred because `src/` is owned
-  elsewhere. Add it when integrating native lifecycle.
-- Deep links / universal links if server auth flows need them.
-- Real device QA of safe-area insets on notched hardware.
+  version/build numbers, Associated Domains entitlement, App Store Connect listing,
+  screenshots, privacy manifest.
+- Android: upload keystore + `signingConfig` (do NOT commit the keystore),
+  per-release `versionCode`/`versionName`, Play Console listing, screenshots,
+  data-safety form.
+- Real device QA of safe-area insets on notched hardware (landscape included).
