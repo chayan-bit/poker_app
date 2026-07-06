@@ -71,8 +71,11 @@ class Harness {
   divergences = 0;
   dishonest = 0;
 
-  constructor(ids: string[], bootstrapId: string) {
-    this.net = new InMemoryNet(ids);
+  constructor(ids: string[], bootstrapId: string, star = false) {
+    // In a star, only the bootstrap (host) is linked to each peer; guests reach
+    // each other solely through the host's relay, exactly as in the real nearby
+    // session. Full mesh otherwise.
+    this.net = new InMemoryNet(ids, star ? bootstrapId : undefined);
     for (let i = 0; i < ids.length; i++) {
       this.peers.push(this.makePeer(ids[i], i, bootstrapId));
     }
@@ -320,6 +323,53 @@ async function testPartitionHeal(): Promise<void> {
   check("c state hash matches live peer after heal", c.node.stateHash() === a.node.stateHash());
 }
 
+// ---- Scenario 4: star topology relay (3 peers, full button rotation) --------
+
+async function testStarRelay(): Promise<void> {
+  console.log("\nstar topology: host relays so a rotated guest-coordinator reaches all peers");
+  // Guests g1, g2 connect ONLY to the host; they have no direct link to each
+  // other. From hand 2 on, the coordinator (button seat) rotates onto a guest
+  // that the OTHER guest cannot reach directly, so the game only advances if the
+  // host relays the guest-coordinator's fair-seed round and entries across.
+  const h = new Harness(["host", "g1", "g2"], "host", true);
+  h.seatAll();
+
+  const coordinated = new Set<string>();
+  for (let i = 0; i < 8000 && h.refHands() < 9; i++) {
+    await h.tickOnce();
+    if (h.refRunning()) coordinated.add(h.live()[0].node.coordinatorPeerId());
+  }
+
+  const peers = h.live();
+  const refHead = peers[0].node.headSeq();
+  const refHash = peers[0].node.stateHash();
+  const refStacks = stacksOf(peers[0]);
+
+  check("star: reached >= 9 hands via relay", h.refHands() >= 9, `hands=${h.refHands()}`);
+  check(
+    "star: coordinator rotated onto every seat (incl. both guests)",
+    coordinated.has("host") && coordinated.has("g1") && coordinated.has("g2"),
+    [...coordinated].join(","),
+  );
+  check(
+    "star: all peers converge on head",
+    peers.every((p) => p.node.headSeq() === refHead),
+    peers.map((p) => `${p.id}:${p.node.headSeq()}`).join(" "),
+  );
+  check(
+    "star: all peers converge on state hash",
+    peers.every((p) => p.node.stateHash() === refHash),
+    peers.map((p) => `${p.id}:${p.node.stateHash().slice(0, 8)}`).join(" "),
+  );
+  check(
+    "star: all peers converge on stacks",
+    peers.every((p) => stacksOf(p) === refStacks),
+    refStacks,
+  );
+  check("star: no state divergence flagged", h.divergences === 0, `divergences=${h.divergences}`);
+  check("star: no dishonest-dealer flag", h.dishonest === 0);
+}
+
 // ---- Runner -----------------------------------------------------------------
 
 async function main(): Promise<void> {
@@ -329,6 +379,7 @@ async function main(): Promise<void> {
   await testFairVectors();
   await testMeshChurn();
   await testPartitionHeal();
+  await testStarRelay();
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n==== ${results.length - failed.length}/${results.length} checks passed ====`);

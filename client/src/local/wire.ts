@@ -36,6 +36,8 @@ export interface LogEntry {
 export interface ActionRequest {
   actor: string;
   envelope: Envelope;
+  /** Idempotency/ack id so the sender can retry until the coordinator acks. */
+  reqId?: string;
 }
 
 /**
@@ -74,17 +76,40 @@ export interface FairMsg {
   shareHex?: string;
   /** Revealed shares keyed by player id for phase "seed" (post-round verify). */
   shares?: Record<string, string>;
+  /**
+   * The commitments keyed by player id for phase "seed". Every participant
+   * checks each revealed share opens its commitment (and that its OWN share is
+   * present and unmodified) before accepting the seed, so a dishonest dealer
+   * cannot drop or substitute a share (issue #28 hardening).
+   */
+  commits?: Record<string, string>;
   /** The combined 64-hex seed the coordinator will log, for phase "seed". */
   seedHex?: string;
 }
 
-/** All frames exchanged on the mesh. */
-export type MeshMsg =
+/**
+ * Routing header carried by every frame. Absent `to` means a broadcast that the
+ * relay hub (the host in a star topology) fans out to every other peer; a set
+ * `to` is a directed frame the hub forwards to that single peer. `gossip` marks
+ * a catch-up reply (serveNeed) so it bypasses the live-coordinator origin check
+ * (it is still hash-validated on apply). See MeshNode relay + auth logic.
+ */
+export interface RouteHeader {
+  to?: string;
+  gossip?: boolean;
+}
+
+/** All frames exchanged on the mesh, before the routing header is attached. */
+export type MeshBody =
   | { t: "hello"; from: string }
   | { t: "heartbeat"; from: string; head: number; nowMs: number; coordSeat: number }
   | { t: "entries"; from: string; entries: LogEntry[] }
   | { t: "need"; from: string; have: number }
   | { t: "request"; from: string; req: ActionRequest }
+  | { t: "ack"; from: string; reqId: string }
   | { t: "snapshot_req"; from: string }
   | { t: "snapshot"; from: string; snap: Snapshot }
   | FairMsg;
+
+/** A wire frame: a body plus its routing header. */
+export type MeshMsg = MeshBody & RouteHeader;

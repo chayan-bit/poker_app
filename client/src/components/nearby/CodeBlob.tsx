@@ -1,10 +1,9 @@
-// A copyable connection blob for serverless WebRTC signaling. The rtc.ts offer
-// and answer blobs are full base64 SDP payloads (1-2 KB) - far larger than a
-// hand-rolled QR encoder can render legibly, and adding a QR dependency is out
-// of scope here. So the primary, always-reliable transport is a mono text block
-// with one-tap copy and an explicit "scan or paste" framing; a real QR renderer
-// (or native mDNS auto-discovery) can drop into the marked slot later without
-// touching this contract.
+// The copy/paste fallback for serverless WebRTC signaling. QR is the primary
+// path now (QrCode / QrScanner), but a text block with one-tap copy and a paste
+// target is always available for when the camera is unavailable or a blob will
+// not fit a QR. QrCode renders this component beneath the code image, and
+// QrScanner reuses BlobInput as its paste fallback, so this stays the single
+// source of the copy/paste affordances.
 
 import { useCallback, useState } from "react";
 

@@ -16,10 +16,12 @@ import type { EventMap, LocalConfig } from "./core.ts";
 import { coordinatorSeat, eligibleCount, type SeatInfo } from "./coordinator.ts";
 import { FairSeedDriver } from "./meshseed.ts";
 import {
+  ACTION_RETRY_MS,
   DEFAULT_GRACE,
   DEFAULT_HEARTBEAT,
   DEFAULT_ROUND_TIMEOUT,
   DEFAULT_TURN_TIMEOUT,
+  MAX_ACTION_TRIES,
   PROGRESS_EVENTS,
   type CoreLike,
   type MeshHooks,
@@ -29,12 +31,32 @@ import { updateView, newView, type MeshView } from "./meshview.ts";
 import type { Connection } from "./transport.ts";
 import type { ActionRequest, LogEntry, MeshMsg, Snapshot } from "./wire.ts";
 
+/** One in-flight local action awaiting the coordinator's ack (retry bookkeeping). */
+interface PendingAction {
+  req: ActionRequest;
+  sentMs: number;
+  tries: number;
+}
+
+/** The stake-defining core fields every peer must share for hashes to agree. */
+function sameCoreConfig(a: LocalConfig, b: LocalConfig): boolean {
+  return (
+    a.id === b.id &&
+    a.smallBlind === b.smallBlind &&
+    a.bigBlind === b.bigBlind &&
+    (a.maxSeats ?? 9) === (b.maxSeats ?? 9)
+  );
+}
+
 export class MeshNode {
   readonly selfId: string;
-  private readonly core: CoreLike;
+  private core: CoreLike;
   private readonly config: LocalConfig;
   private readonly clock: () => number;
   private readonly bootstrapId: string;
+  /** Relay hub iff this peer bootstraps the mesh (the host in a star topology). */
+  private readonly isHub: boolean;
+  private readonly makeCore?: () => CoreLike;
   private readonly hooks: MeshHooks;
   private readonly heartbeatMs: number;
   private readonly graceMs: number;
@@ -57,6 +79,15 @@ export class MeshNode {
   private requestQueue: ActionRequest[] = [];
   private lastActionMs = 0;
   private dealingInProgress = false;
+  /** reqIds this coordinator has already sequenced, so retries never double-apply. */
+  private readonly processedReqs = new Set<string>();
+
+  // Local-action delivery: pending requests awaiting an ack, and a reqId counter.
+  private readonly pending = new Map<string, PendingAction>();
+  private reqSeq = 0;
+
+  /** True while rebuilding from a snapshot after rejecting a divergent entry. */
+  private resyncing = false;
 
   // Fair-seed round machine (coordinator side) + verification (every peer).
   private readonly fair: FairSeedDriver;
@@ -67,6 +98,8 @@ export class MeshNode {
     this.config = opts.config;
     this.clock = opts.clock;
     this.bootstrapId = opts.bootstrapId;
+    this.isHub = opts.selfId === opts.bootstrapId;
+    this.makeCore = opts.makeCore;
     this.hooks = opts.hooks ?? {};
     this.heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT;
     this.graceMs = opts.graceMs ?? DEFAULT_GRACE;
@@ -98,12 +131,44 @@ export class MeshNode {
   }
 
 
-  /** A local player's chosen action; routed to the current coordinator. */
+  /**
+   * A local player's chosen action; routed to the current coordinator. When the
+   * coordinator is a remote peer the request is tracked and retried until acked
+   * (or surfaced as undelivered), so a momentarily-not-open channel or a lost
+   * frame does not silently drop the action (issue #28 hardening).
+   */
   submitLocalAction(envelope: object): void {
-    const req: ActionRequest = { actor: this.selfId, envelope: envelope as ActionRequest["envelope"] };
     const coord = this.coordinatorPeerId();
-    if (coord === this.selfId) this.requestQueue.push(req);
-    else this.sendTo(coord, { t: "request", from: this.selfId, req });
+    if (coord === this.selfId) {
+      this.requestQueue.push({ actor: this.selfId, envelope: envelope as ActionRequest["envelope"] });
+      return;
+    }
+    const reqId = `${this.selfId}:${(this.reqSeq += 1)}`;
+    const req: ActionRequest = { actor: this.selfId, envelope: envelope as ActionRequest["envelope"], reqId };
+    this.pending.set(reqId, { req, sentMs: this.clock(), tries: 1 });
+    this.sendTo(coord, { t: "request", from: this.selfId, req });
+  }
+
+  /** Resend unacked action requests to the (possibly rotated) coordinator. */
+  private retryPending(now: number): void {
+    for (const [reqId, p] of this.pending) {
+      if (now - p.sentMs < ACTION_RETRY_MS) continue;
+      if (p.tries >= MAX_ACTION_TRIES) {
+        this.pending.delete(reqId);
+        this.hooks.onActionUndelivered?.(p.req);
+        continue;
+      }
+      const coord = this.coordinatorPeerId();
+      if (coord === this.selfId) {
+        // We became the coordinator: sequence it ourselves and stop retrying.
+        this.pending.delete(reqId);
+        this.requestQueue.push(p.req);
+        continue;
+      }
+      p.tries += 1;
+      p.sentMs = now;
+      this.sendTo(coord, { t: "request", from: this.selfId, req: p.req });
+    }
   }
 
   /**
@@ -114,6 +179,7 @@ export class MeshNode {
     const now = nowMs ?? this.clock();
     this.maybeHeartbeat(now);
     this.drainBuffer();
+    this.retryPending(now);
     if (this.isCoordinator()) this.coordinatorDuties(now);
     // Drop any half-run fair round if we are no longer the coordinator, so a
     // later coordination stint never resurrects a stale seed for a new hand.
@@ -136,6 +202,9 @@ export class MeshNode {
    * cross-checked so the joiner never trusts a single peer.
    */
   adoptSnapshot(primary: Snapshot, secondary?: Snapshot): void {
+    if (!sameCoreConfig(this.config, primary.config)) {
+      throw new Error("mesh: snapshot config disagrees with local core config; refusing to adopt");
+    }
     if (secondary && secondary.stateHash !== primary.stateHash) {
       throw new Error("mesh: snapshot hashes disagree; refusing to trust either");
     }
@@ -264,6 +333,7 @@ export class MeshNode {
   }
 
   private ingest(entry: LogEntry): void {
+    if (this.resyncing) return; // a snapshot will supersede everything in flight
     if (entry.seq <= this.head) return; // duplicate
     if (entry.seq !== this.head + 1) {
       this.buffer.set(entry.seq, entry);
@@ -274,26 +344,74 @@ export class MeshNode {
   }
 
   private drainBuffer(): void {
+    if (this.resyncing) return;
     let next = this.buffer.get(this.head + 1);
-    while (next) {
+    while (next && !this.resyncing) {
       this.buffer.delete(next.seq);
       this.apply(next);
       next = this.buffer.get(this.head + 1);
     }
   }
 
+  /**
+   * A sequencer is authorized iff it is the bootstrap peer (pre-seating) or it
+   * currently occupies a seat. This is derived purely from the replicated seat
+   * view (not the racy liveness set), so it never false-rejects during a
+   * coordinator handoff; it blocks any non-participant from injecting entries.
+   * Seed biasing by a seated peer is separately caught by each participant's
+   * own-share verification in meshseed.ts.
+   */
+  private isAuthorizedSequencer(by: string): boolean {
+    if (by === this.bootstrapId) return true;
+    for (const info of this.view.seats.values()) if (info.playerId === by) return true;
+    return false;
+  }
+
   private apply(entry: LogEntry): void {
+    // Authenticate the sequencer before mutating the core.
+    if (!this.isAuthorizedSequencer(entry.by)) {
+      this.beginResync("unauthorized");
+      return;
+    }
     this.runOnCore(entry);
     const localHash = this.core.stateHash();
     if (entry.hashAfter && localHash !== entry.hashAfter) {
+      // Divergent: the entry does NOT reproduce the coordinator's hash. Never
+      // commit it (that would fork the replicated state); flag it and rebuild
+      // from a peer snapshot instead. Dishonest-dealer detection (combine(shares)
+      // === logged seed) lives in the async fair "seed" handler (meshseed.ts).
       this.hooks.onDivergence?.(entry, localHash);
+      this.beginResync("divergence");
+      return;
     }
-    // Dishonest-dealer detection (combine(shares) === logged seed) lives in the
-    // async fair "seed" handler (meshseed.ts), not here, so entry-before-message
-    // ordering cannot raise a false positive.
     this.log[entry.seq - 1] = entry;
     this.head = entry.seq;
     this.projectView(entry, this.lastEvents);
+  }
+
+  /**
+   * Rejects the in-flight divergent/unauthorized state and asks peers for a
+   * fresh snapshot to rebuild from. The WASM core cannot undo a bad mutation, so
+   * recovery rebuilds a clean core (when a factory is supplied) and replays the
+   * adopted snapshot into it. Idempotent while a resync is already pending.
+   */
+  private beginResync(reason: "divergence" | "unauthorized"): void {
+    if (this.resyncing) return;
+    this.resyncing = true;
+    this.buffer.clear();
+    this.hooks.onResync?.(reason);
+    this.broadcast({ t: "snapshot_req", from: this.selfId });
+  }
+
+  private adoptForResync(snap: Snapshot): void {
+    try {
+      if (this.makeCore) this.core = this.makeCore();
+      this.resyncing = false; // adoptSnapshot replays cleanly into the fresh core
+      this.adoptSnapshot(snap);
+      this.hooks.onResync?.("recovered");
+    } catch {
+      this.resyncing = true; // stay in resync; another snapshot may arrive
+    }
   }
 
   private runOnCore(entry: LogEntry): void {
@@ -334,6 +452,16 @@ export class MeshNode {
   }
 
 
+  /**
+   * Routes one inbound frame. Directed frames (`to` set) not addressed to us are
+   * forwarded when we are the relay hub (the host); broadcast frames (no `to`)
+   * are handled locally and, on the hub, fanned out to every other peer. This is
+   * what lets a rotated guest-coordinator's messages reach a guest it has no
+   * direct WebRTC link to in a star topology (issue #28 fix): the propagation
+   * path is guest-coordinator -> host hub -> other guest, for both the fair-seed
+   * round and the entries broadcast, so the replicated log converges on every
+   * peer across full button rotation.
+   */
   private onFrame(data: string): void {
     let msg: MeshMsg;
     try {
@@ -341,7 +469,19 @@ export class MeshNode {
     } catch {
       return;
     }
+    if (msg.to !== undefined && msg.to !== this.selfId) {
+      if (this.isHub) this.conns.get(msg.to)?.send(data);
+      return;
+    }
+    if (msg.to === undefined && this.isHub) this.relayBroadcast(data, msg.from);
     this.handle(msg);
+  }
+
+  /** Hub fan-out: resend a guest's broadcast to every peer but its origin. */
+  private relayBroadcast(data: string, from: string): void {
+    for (const [peerId, conn] of this.conns) {
+      if (peerId !== from) conn.send(data);
+    }
   }
 
   private handle(msg: MeshMsg): void {
@@ -357,28 +497,51 @@ export class MeshNode {
         this.serveNeed(msg.from, msg.have);
         break;
       case "entries":
+        // Live (non-gossip) frames must come from an authorized sequencer; gossip
+        // catch-up (serveNeed) is exempt from the origin check. Either way each
+        // entry is re-authorized by `by` and hash-validated on apply.
+        if (msg.gossip !== true && !this.isAuthorizedSequencer(msg.from)) {
+          this.beginResync("unauthorized");
+          break;
+        }
         for (const e of msg.entries) this.ingest(e);
         break;
       case "request":
-        // Queue by coordinator identity; the quorum guard only gates emission,
-        // so bootstrap proposals are not lost before quorum forms.
-        if (this.coordinatorPeerId() === this.selfId) this.requestQueue.push(msg.req);
+        this.onRequest(msg.from, msg.req);
+        break;
+      case "ack":
+        this.pending.delete(msg.reqId);
         break;
       case "snapshot_req":
-        this.sendTo(msg.from, { t: "snapshot", from: this.selfId, snap: this.snapshot() });
+        // A resyncing node's own state is suspect; do not serve snapshots from it.
+        if (!this.resyncing) this.sendTo(msg.from, { t: "snapshot", from: this.selfId, snap: this.snapshot() });
         break;
       case "snapshot":
-        break; // adoption is driven explicitly via adoptSnapshot
+        if (this.resyncing) this.adoptForResync(msg.snap);
+        break;
       case "fair":
         void this.fair.handle(msg, this.isCoordinator());
         break;
     }
   }
 
+  /** Coordinator side of an action request: sequence once, ack every retry. */
+  private onRequest(from: string, req: ActionRequest): void {
+    if (this.coordinatorPeerId() !== this.selfId) return;
+    if (!req.reqId || !this.processedReqs.has(req.reqId)) {
+      if (req.reqId) this.processedReqs.add(req.reqId);
+      // Queue by coordinator identity; the quorum guard only gates emission,
+      // so bootstrap proposals are not lost before quorum forms.
+      this.requestQueue.push(req);
+    }
+    if (req.reqId) this.sendTo(from, { t: "ack", from: this.selfId, reqId: req.reqId });
+  }
+
   private serveNeed(peer: string, have: number): void {
+    if (this.resyncing) return;
     if (have >= this.head) return;
     const entries = this.log.slice(have, this.head);
-    if (entries.length > 0) this.sendTo(peer, { t: "entries", from: this.selfId, entries });
+    if (entries.length > 0) this.sendTo(peer, { t: "entries", from: this.selfId, entries, gossip: true });
   }
 
   private maybeHeartbeat(now: number): void {
@@ -389,12 +552,25 @@ export class MeshNode {
     });
   }
 
+  /** Fan a frame to every direct link with no `to`, so the hub relays it on. */
   private broadcast(msg: MeshMsg): void {
     const data = JSON.stringify(msg);
     for (const conn of this.conns.values()) conn.send(data);
   }
 
+  /**
+   * Send a directed frame to `peer`. If we have no direct link (a guest reaching
+   * a non-adjacent guest in a star), route it through the relay hub, which
+   * forwards it the last hop. Stamping `to` is what tells the hub to forward
+   * rather than treat the frame as its own.
+   */
   private sendTo(peer: string, msg: MeshMsg): void {
-    this.conns.get(peer)?.send(JSON.stringify(msg));
+    const framed = JSON.stringify({ ...msg, to: peer });
+    const direct = this.conns.get(peer);
+    if (direct) {
+      direct.send(framed);
+      return;
+    }
+    this.conns.get(this.bootstrapId)?.send(framed);
   }
 }

@@ -207,6 +207,20 @@ export class SeedRound {
     return out;
   }
 
+  /**
+   * The commitments keyed by participant, broadcast alongside the seed so every
+   * participant can independently check each revealed share opens its commitment
+   * (and that its own share was not dropped or substituted).
+   */
+  commitsHex(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const p of this.participants) {
+      const c = this.commits.get(p);
+      if (c) out[p] = c;
+    }
+    return out;
+  }
+
   /** The combined seed once every participant has revealed. */
   async seed(): Promise<string> {
     return combineSeed(this.participants.map((p) => this.shares.get(p)!));

@@ -88,18 +88,25 @@ class MemEndpoint implements Connection {
 }
 
 /**
- * A fully-connected in-memory network for deterministic mesh tests. Every pair
- * of peers gets a duplex link. Partitions and reconnects are simulated with
- * setBlocked / addPeer without any real timers, so a test drives time itself.
+ * An in-memory network for deterministic mesh tests. By default every pair of
+ * peers gets a duplex link (full mesh). Pass `hubId` to build a STAR instead:
+ * only the hub links to each other peer, exactly like the real WebRTC nearby
+ * session where guests connect solely to the host. The star relies on the host
+ * relaying mesh frames between guests (MeshNode hub logic), so it is the fixture
+ * that exercises the star-topology relay fix. Partitions and reconnects are
+ * simulated with setBlocked / addPeer without any real timers.
  */
 export class InMemoryNet {
   // endpoints[owner][remote] is the Connection owner uses to reach remote.
   private readonly endpoints = new Map<string, Map<string, MemEndpoint>>();
+  private readonly hubId: string | null;
 
-  constructor(peerIds: string[]) {
+  constructor(peerIds: string[], hubId?: string) {
+    this.hubId = hubId ?? null;
     for (const id of peerIds) this.endpoints.set(id, new Map());
     for (let i = 0; i < peerIds.length; i++) {
       for (let j = i + 1; j < peerIds.length; j++) {
+        if (hubId && peerIds[i] !== hubId && peerIds[j] !== hubId) continue;
         this.linkPair(peerIds[i], peerIds[j]);
       }
     }
@@ -114,12 +121,16 @@ export class InMemoryNet {
     this.endpoints.get(b)!.set(a, ba);
   }
 
-  /** Adds a late-joining peer, linking it to every existing peer. */
+  /** Adds a late-joining peer, linking it to every existing peer (or, in a star,
+   *  only to the hub). */
   addPeer(id: string): void {
     if (this.endpoints.has(id)) return;
     const existing = [...this.endpoints.keys()];
     this.endpoints.set(id, new Map());
-    for (const other of existing) this.linkPair(id, other);
+    for (const other of existing) {
+      if (this.hubId && id !== this.hubId && other !== this.hubId) continue;
+      this.linkPair(id, other);
+    }
   }
 
   /** The connections `owner` uses to reach its peers. */

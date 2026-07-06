@@ -3,9 +3,12 @@
 // the dealer-loss void toast, a reconnecting-peer notice, the dishonest-dealer
 // red banner, and an End session control. All animation is transform/opacity.
 
+import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import Table from "@/components/table/Table";
 import { useNearby } from "./nearbyStore";
+import { useWakeLock } from "./useWakeLock";
+import { ReconnectSheet } from "./ReconnectSheet";
 import type { NearbySession } from "./session";
 
 const toast = {
@@ -20,12 +23,36 @@ export default function NearbyTable({ session }: { session: NearbySession | null
   const voidToast = useNearby((s) => s.voidToast);
   const reconnecting = useNearby((s) => s.reconnecting);
   const dishonestHand = useNearby((s) => s.dishonestHand);
+  const connectionState = useNearby((s) => s.connectionState);
+  const notice = useNearby((s) => s.notice);
   const setVoidToast = useNearby((s) => s.setVoidToast);
   const setDishonest = useNearby((s) => s.setDishonest);
+  const [showReconnect, setShowReconnect] = useState(false);
+
+  // Keep the screen awake so a phone locking mid-hand does not drop the mesh.
+  useWakeLock(true);
 
   return (
     <div className="relative h-full w-full">
       <Table />
+
+      {/* Link-lost banner with a reconnect affordance (seat is held meanwhile). */}
+      <AnimatePresence>
+        {connectionState === "lost" && (
+          <motion.button
+            {...toast}
+            onClick={() => setShowReconnect(true)}
+            className="absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-xl px-4 py-2 text-xs font-semibold text-white"
+            style={{ background: "var(--danger, #c0392b)", boxShadow: "var(--shadow-2)" }}
+          >
+            Connection lost - tap to reconnect
+          </motion.button>
+        )}
+      </AnimatePresence>
+
+      {showReconnect && session && (
+        <ReconnectSheet session={session} onClose={() => setShowReconnect(false)} />
+      )}
 
       {/* Dishonest-dealer flag: clear red banner naming the offending hand. */}
       <AnimatePresence>
@@ -75,6 +102,26 @@ export default function NearbyTable({ session }: { session: NearbySession | null
               {n} disconnected - holding their seat…
             </motion.div>
           ))}
+          {connectionState === "unstable" && (
+            <motion.div
+              key="unstable"
+              {...toast}
+              className="rounded-full px-4 py-1.5 text-xs text-ink-dim"
+              style={{ background: "var(--surface-3)", boxShadow: "inset 0 0 0 1px var(--line-hi)" }}
+            >
+              Connection unstable…
+            </motion.div>
+          )}
+          {notice && (
+            <motion.div
+              key="notice"
+              {...toast}
+              className="rounded-full px-4 py-1.5 text-xs text-ink-dim"
+              style={{ background: "var(--surface-4)", boxShadow: "inset 0 0 0 1px var(--line-hi)" }}
+            >
+              {notice}
+            </motion.div>
+          )}
         </AnimatePresence>
       </div>
 

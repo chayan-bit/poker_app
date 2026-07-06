@@ -7,7 +7,15 @@
 // peer routes "fair" frames through handle so it can play the participant role
 // (respond to commit_req / reveal_req) regardless of who coordinates.
 
-import { combineSeedHex, commit, randomShare, SeedRound, shareToHex } from "./fairmp.ts";
+import {
+  combineSeedHex,
+  commit,
+  randomShare,
+  SeedRound,
+  shareFromHex,
+  shareToHex,
+  verifyCommit,
+} from "./fairmp.ts";
 import type { FairMsg, MeshMsg } from "./wire.ts";
 
 export interface FairCtx {
@@ -20,12 +28,22 @@ export interface FairCtx {
   onSeed(seedHex: string): void;
 }
 
+/**
+ * Round-scoped key for a peer's own share. The round counter (`hand`) is local
+ * to each coordinator, so it collides across coordinators and across a peer's
+ * own coordinator/participant roles; namespacing by the coordinator id makes the
+ * key globally unique, which the own-share dishonesty check depends on.
+ */
+function roundKey(coordinatorId: string, hand: number): string {
+  return `${coordinatorId}:${hand}`;
+}
+
 export class FairSeedDriver {
   private round: SeedRound | null = null;
   private roundStartedMs = 0;
   private roundId = 0;
   private revealRequested = false;
-  private readonly myShares = new Map<number, Uint8Array>();
+  private readonly myShares = new Map<string, Uint8Array>();
   private readonly expectedSeeds = new Set<string>();
 
   constructor(private readonly ctx: FairCtx) {}
@@ -75,7 +93,7 @@ export class FairSeedDriver {
     if (!round) return;
     const share = randomShare();
     const shareHex = shareToHex(share);
-    this.myShares.set(round.hand, share);
+    this.myShares.set(roundKey(this.ctx.selfId, round.hand), share);
     round.addCommit(this.ctx.selfId, await commit(share));
     // The coordinator opens its own commit immediately so a single-participant
     // round can complete; only peers' reveals are awaited over the wire.
@@ -94,7 +112,8 @@ export class FairSeedDriver {
     this.expectedSeeds.add(seedHex);
     this.ctx.broadcast({
       t: "fair", from: this.ctx.selfId, phase: "seed", hand: round.hand,
-      participants: round.order(), shares: round.revealedSharesHex(), seedHex,
+      participants: round.order(), shares: round.revealedSharesHex(),
+      commits: round.commitsHex(), seedHex,
     });
     this.ctx.onSeed(seedHex);
   }
@@ -104,8 +123,15 @@ export class FairSeedDriver {
     switch (msg.phase) {
       case "commit_req": {
         if (!msg.participants?.includes(this.ctx.selfId)) return;
-        const share = randomShare();
-        this.myShares.set(msg.hand, share);
+        // Idempotent under relay/duplicate delivery: reuse this hand's share so a
+        // second commit_req cannot make us commit to a different value than we
+        // will later reveal (which would look dishonest to the coordinator).
+        const key = roundKey(msg.from, msg.hand);
+        let share = this.myShares.get(key);
+        if (!share) {
+          share = randomShare();
+          this.myShares.set(key, share);
+        }
         this.ctx.sendTo(msg.from, {
           t: "fair", from: this.ctx.selfId, phase: "commit", hand: msg.hand, commit: await commit(share),
         });
@@ -118,7 +144,7 @@ export class FairSeedDriver {
         break;
       }
       case "reveal_req": {
-        const share = this.myShares.get(msg.hand);
+        const share = this.myShares.get(roundKey(msg.from, msg.hand));
         if (!share) return;
         this.ctx.sendTo(msg.from, {
           t: "fair", from: this.ctx.selfId, phase: "reveal", hand: msg.hand, shareHex: shareToHex(share),
@@ -133,11 +159,41 @@ export class FairSeedDriver {
       }
       case "seed": {
         if (!msg.seedHex || !msg.participants || !msg.shares) return;
-        const expected = await combineSeedHex(msg.participants, msg.shares);
-        if (expected !== msg.seedHex) this.ctx.onDishonest(msg.seedHex);
-        else this.expectedSeeds.add(msg.seedHex);
+        const mine = this.myShares.get(roundKey(msg.from, msg.hand));
+        if (await this.seedIsHonest(mine, msg.participants, msg.shares, msg.commits, msg.seedHex)) {
+          this.expectedSeeds.add(msg.seedHex);
+        } else {
+          this.ctx.onDishonest(msg.seedHex);
+        }
         break;
       }
     }
+  }
+
+  /**
+   * A finalized seed is honest for THIS participant only if:
+   *  1. every revealed share opens its published commitment (no substitution),
+   *  2. our own committed share is present and byte-identical in the reveal set
+   *     (the dealer did not silently drop or replace it to bias the deck),
+   *  3. the combination of the revealed shares reproduces the logged seed.
+   * Any failure returns false so the caller flags the dishonest dealer.
+   */
+  private async seedIsHonest(
+    mine: Uint8Array | undefined,
+    participants: string[],
+    shares: Record<string, string>,
+    commits: Record<string, string> | undefined,
+    seedHex: string,
+  ): Promise<boolean> {
+    for (const p of participants) {
+      const shareHex = shares[p];
+      if (!shareHex) return false;
+      const commitHex = commits?.[p];
+      if (commitHex && !(await verifyCommit(shareFromHex(shareHex), commitHex))) return false;
+    }
+    if (mine && participants.includes(this.ctx.selfId)) {
+      if (shares[this.ctx.selfId] !== shareToHex(mine)) return false;
+    }
+    return (await combineSeedHex(participants, shares)) === seedHex;
   }
 }

@@ -32,6 +32,9 @@ export interface NearbyConfig {
   startingStack: number;
 }
 
+/** This peer's own link health to the mesh, surfaced for a reconnect affordance. */
+export type ConnectionState = "connected" | "connecting" | "unstable" | "lost";
+
 interface NearbyState {
   phase: NearbyPhase;
   config: NearbyConfig;
@@ -43,6 +46,10 @@ interface NearbyState {
   reconnecting: string[];
   /** Hand id flagged by the mesh as dealt with a dishonest seed, or null. */
   dishonestHand: string | null;
+  /** This peer's link health to the rest of the table. */
+  connectionState: ConnectionState;
+  /** A transient status line (action-undelivered, resyncing); cleared by the UI. */
+  notice: string | null;
   summary: SessionSummary | null;
 
   setPhase: (phase: NearbyPhase) => void;
@@ -51,6 +58,8 @@ interface NearbyState {
   setVoidToast: (msg: string | null) => void;
   setReconnecting: (names: string[]) => void;
   setDishonest: (handId: string | null) => void;
+  setConnectionState: (state: ConnectionState) => void;
+  setNotice: (msg: string | null) => void;
   setSummary: (summary: SessionSummary | null) => void;
   reset: () => void;
 }
@@ -69,6 +78,8 @@ export const useNearby = create<NearbyState>((set) => ({
   voidToast: null,
   reconnecting: [],
   dishonestHand: null,
+  connectionState: "connected",
+  notice: null,
   summary: null,
 
   setPhase: (phase) => set({ phase }),
@@ -77,6 +88,8 @@ export const useNearby = create<NearbyState>((set) => ({
   setVoidToast: (voidToast) => set({ voidToast }),
   setReconnecting: (reconnecting) => set({ reconnecting }),
   setDishonest: (dishonestHand) => set({ dishonestHand }),
+  setConnectionState: (connectionState) => set({ connectionState }),
+  setNotice: (notice) => set({ notice }),
   setSummary: (summary) => set({ summary }),
   reset: () =>
     set({
@@ -85,6 +98,8 @@ export const useNearby = create<NearbyState>((set) => ({
       voidToast: null,
       reconnecting: [],
       dishonestHand: null,
+      connectionState: "connected",
+      notice: null,
       summary: null,
     }),
 }));

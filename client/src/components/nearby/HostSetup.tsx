@@ -6,9 +6,11 @@
 import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Button, Card, Field, Input } from "@/components/ui/kit";
-import { CodeBlob, BlobInput } from "./CodeBlob";
+import { QrCode } from "./QrCode";
+import { QrScanner } from "./QrScanner";
 import { NearbySession, type HostInvite } from "./session";
 import { useNearby } from "./nearbyStore";
+import { errorMessage } from "./errors";
 
 const STAKES = [
   { sb: 1, bb: 2 },
@@ -30,32 +32,46 @@ export default function HostSetup({ onReady }: { onReady: (s: NearbySession) => 
   const [invite, setInvite] = useState<HostInvite | null>(null);
   const [joined, setJoined] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const sessionRef = useRef<NearbySession | null>(null);
 
   async function createTable() {
+    if (busy) return;
     setBusy(true);
+    setError(null);
     const cfg = {
       tableName: tableName.trim() || "Kitchen table",
       smallBlind: STAKES[stakes].sb,
       bigBlind: STAKES[stakes].bb,
       startingStack: STACKS[stack],
     };
-    setConfig(cfg);
-    const session = await NearbySession.host(cfg, name.trim() || "Host");
-    sessionRef.current = session;
-    onReady(session);
-    setInvite(await session.createInvite());
-    setStep("invite");
-    setBusy(false);
+    try {
+      setConfig(cfg);
+      const session = await NearbySession.host(cfg, name.trim() || "Host");
+      sessionRef.current = session;
+      onReady(session);
+      setInvite(await session.createInvite());
+      setStep("invite");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function acceptAnswer(answer: string) {
-    if (!invite || !sessionRef.current) return;
+    if (!invite || !sessionRef.current || busy) return;
     setBusy(true);
-    await invite.accept(answer);
-    setJoined((n) => n + 1);
-    setInvite(await sessionRef.current.createInvite());
-    setBusy(false);
+    setError(null);
+    try {
+      await invite.accept(answer);
+      setJoined((n) => n + 1);
+      setInvite(await sessionRef.current.createInvite());
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (step === "invite") {
@@ -71,20 +87,24 @@ export default function HostSetup({ onReady }: { onReady: (s: NearbySession) => 
               </p>
             </div>
             {invite && (
-              <CodeBlob
+              <QrCode
                 label="Your invite code"
                 value={invite.offerBlob}
-                hint="Scan or paste this into your friend's Join screen."
+                hint="Your friend scans this on their Join screen."
               />
             )}
-            <BlobInput
+            <QrScanner
               label="Their reply code"
-              placeholder="Paste the code they send back"
               hint="One code per friend. Repeat to seat more players."
               cta="Seat this friend"
               busy={busy}
-              onSubmit={acceptAnswer}
+              onResult={acceptAnswer}
             />
+            {error && (
+              <p className="rounded-xl p-3 text-xs" style={{ background: "var(--surface-3)", color: "var(--danger, #c0392b)" }}>
+                {error}
+              </p>
+            )}
             {joined > 0 && (
               <p className="num text-sm text-ink-dim">
                 {joined} {joined === 1 ? "friend" : "friends"} seated.
@@ -134,6 +154,11 @@ export default function HostSetup({ onReady }: { onReady: (s: NearbySession) => 
             These chips are for this table only. They are never synced to your
             online balance, and rebuys are free.
           </p>
+          {error && (
+            <p className="rounded-xl p-3 text-xs" style={{ background: "var(--surface-3)", color: "var(--danger, #c0392b)" }}>
+              {error}
+            </p>
+          )}
           <Button variant="gold" disabled={!name.trim() || busy} onClick={createTable}>
             {busy ? "Starting…" : "Start table"}
           </Button>

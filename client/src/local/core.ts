@@ -84,7 +84,7 @@ export function initLocalCore(
   execUrl = "/wasm_exec.js",
 ): Promise<void> {
   if (runtimeReady) return runtimeReady;
-  runtimeReady = (async () => {
+  const attempt = (async () => {
     if (typeof WebAssembly === "undefined") {
       throw new Error("localcore: WebAssembly is not available in this environment");
     }
@@ -106,6 +106,12 @@ export function initLocalCore(
       throw new Error("localcore: WASM module did not install globalThis.tablecore");
     }
   })();
+  // Do NOT memoize a rejection: a transient tablecore.wasm fetch failure must not
+  // permanently break nearby mode. Clear the memo on failure so a retry re-loads.
+  runtimeReady = attempt.catch((err) => {
+    runtimeReady = null;
+    throw err;
+  });
   return runtimeReady;
 }
 
