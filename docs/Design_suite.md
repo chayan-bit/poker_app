@@ -82,7 +82,11 @@ No skeuomorphic wood-and-leather kitsch (Zynga) and no casino-neon assault (WSOP
 - **Surfaces**: near-black charcoal `#101418`, table felt deep green `#0E3B2E` with a subtle radial vignette.
 - **Accents**: chip gold `#E8B44C` for pots/wins, action blue `#4C9AE8` for the active player, danger red `#E85C5C` reserved for fold/timeout only.
 - **Cards**: oversized indices, four-color deck as a default-off toggle, white faces at maximum contrast; card legibility beats card beauty.
-- **Type**: one variable sans (Inter or similar), tabular numerals everywhere numbers appear; chip counts must not jitter in width as they tick.
+- **Type**: a three-voice system, locked (single-font Inter was the biggest "AI-generated" tell and is retired as a do-everything face).
+  - *Display*: Fraunces variable (SOFT 40, WONK 0) for headlines, brand moments, and card corner indices; the italic (WONK 1) is the house accent color moment, replacing gradient text, which is banned.
+  - *UI*: Inter for controls, body, labels; tabular numerals everywhere numbers appear so chip counts never jitter as they tick.
+  - *Code*: JetBrains Mono for join codes, seeds, commitments, hand IDs (slashed zero on).
+- **Brand**: the spade-in-ring monogram + "Felt" wordmark; never render the repo name "poker_app" in UI. Suit/gear glyphs are always SVG paths, never Unicode text (iOS renders them as emoji).
 - Light theme exists but dark is the design target; both ship from day one via tokens.
 
 ### 5.3 Layout

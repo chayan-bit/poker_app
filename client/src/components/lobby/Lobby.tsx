@@ -5,7 +5,7 @@
 import { lazy, Suspense, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Screen, Card, Button, Input } from "@/components/ui/kit";
+import { Screen, Card, Button, Input, SpadeMark, Wordmark, Icon } from "@/components/ui/kit";
 import { ChipStack } from "@/components/table/Chips";
 import { FriendsPanel } from "./FriendsPanel";
 
@@ -53,12 +53,16 @@ export default function Lobby() {
       <motion.header className="flex items-center justify-between" {...rise(0)}>
         <button onClick={() => nav("/")} className="flex items-center gap-2.5 no-tap-highlight">
           <span
-            className="grid h-9 w-9 place-items-center rounded-xl text-lg"
-            style={{ background: "linear-gradient(150deg, var(--felt-hi), var(--felt-edge))", boxShadow: "var(--shadow-1)" }}
+            className="grid h-9 w-9 place-items-center rounded-xl"
+            style={{
+              background: "linear-gradient(150deg, var(--felt-hi), var(--felt-edge))",
+              boxShadow: "var(--shadow-1)",
+              color: "rgba(255,255,255,0.85)",
+            }}
           >
-            ♠
+            <SpadeMark size={20} />
           </span>
-          <span className="text-lg font-semibold tracking-tight">poker_app</span>
+          <Wordmark size={19} />
         </button>
         <div className="flex items-center gap-3">
           <span
@@ -74,7 +78,7 @@ export default function Lobby() {
             style={{ background: "var(--surface-3)", boxShadow: "inset 0 0 0 1px var(--line-hi)" }}
             aria-label="Settings"
           >
-            ⚙
+            <Icon name="gear" size={18} />
           </button>
         </div>
       </motion.header>
@@ -91,7 +95,7 @@ export default function Lobby() {
           <p className="text-xs font-medium uppercase tracking-[0.24em] text-ink-faint">
             Fastest way in
           </p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-tight">Quick Seat</h2>
+          <h2 className="display mt-1 text-[1.65rem]">Quick <span className="display-accent">Seat</span></h2>
           <p className="mt-1 max-w-sm text-sm text-ink-dim">
             We drop you into the best open seat at your stake, instantly.
           </p>
@@ -142,7 +146,7 @@ export default function Lobby() {
                   maxLength={6}
                   value={code}
                   onChange={(e) => setCode(e.target.value.toUpperCase())}
-                  className="num flex-1 uppercase tracking-[0.2em]"
+                  className="mono flex-1 uppercase"
                 />
                 <Button disabled={code.length !== 6} onClick={() => nav(`/table?join=${code}`)}>
                   Join

@@ -24,7 +24,7 @@ export function Screen({
           <header className="flex items-center gap-3">
             {back}
             {title && (
-              <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+              <h1 className="display text-[1.7rem]">{title}</h1>
             )}
           </header>
         )}
@@ -46,23 +46,27 @@ type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 export function Button({ variant = "primary", className = "", ...rest }: BtnProps) {
+  // One loud voice per screen: gold is the house CTA, primary is a quiet
+  // filled neutral, ghost is chrome. Blue stays reserved for in-table action.
   const styles =
-    variant === "primary"
+    variant === "gold"
       ? {
-          background: "linear-gradient(180deg, var(--action-blue-hi), var(--action-blue))",
-          color: "#04121f",
-          boxShadow: "var(--shadow-2), inset 0 1px 0 rgba(255,255,255,0.25)",
+          background: "var(--gold)",
+          color: "#231704",
+          boxShadow:
+            "var(--shadow-2), inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -1px 0 rgba(0,0,0,0.18)",
         }
-      : variant === "gold"
+      : variant === "primary"
         ? {
-            background: "linear-gradient(180deg, var(--gold-hi), var(--gold))",
-            color: "#1a1204",
-            boxShadow: "var(--shadow-2), inset 0 1px 0 rgba(255,255,255,0.3)",
+            background: "var(--surface-4)",
+            color: "var(--ink)",
+            boxShadow:
+              "var(--shadow-1), inset 0 1px 0 rgba(255,255,255,0.09), inset 0 0 0 1px var(--line-hi)",
           }
         : {
-            background: "var(--surface-3)",
-            color: "var(--ink)",
-            boxShadow: "var(--shadow-1), inset 0 0 0 1px var(--line-hi)",
+            background: "transparent",
+            color: "var(--ink-dim)",
+            boxShadow: "inset 0 0 0 1px var(--line)",
           };
   return (
     <button
@@ -121,8 +125,39 @@ export function Toggle({
   );
 }
 
+// Brand mark: a spade inside a fine ring. Used on the felt center, the landing
+// badge, and anywhere the app signs its name. Never render the name in
+// lowercase code-style ("poker_app") in UI - use <Wordmark/>.
+export function SpadeMark({ size = 28, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden>
+      <circle cx="24" cy="24" r="22.5" stroke={color} strokeWidth="1.5" opacity="0.55" />
+      <path
+        d="M24 10c5.2 5 11 9.6 11 15.2 0 3.4-2.4 5.6-5.3 5.6-1.7 0-3.2-.8-4.2-2.1.4 2.6 1.5 5 3.5 6.6h-10c2-1.6 3.1-4 3.5-6.6-1 1.3-2.5 2.1-4.2 2.1-2.9 0-5.3-2.2-5.3-5.6C13 19.6 18.8 15 24 10Z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
+export function Wordmark({ size = 20 }: { size?: number }) {
+  return (
+    <span className="inline-flex items-baseline gap-2">
+      <span className="display" style={{ fontSize: size, fontWeight: 620 }}>
+        Felt
+      </span>
+      <span
+        className="num text-[0.6em] font-medium uppercase"
+        style={{ letterSpacing: "0.32em", color: "var(--ink-faint)" }}
+      >
+        Poker
+      </span>
+    </span>
+  );
+}
+
 // A shared monoline icon set (1.75 stroke, currentColor) - no emoji.
-export function Icon({ name, size = 20 }: { name: "bolt" | "shield" | "devices"; size?: number }) {
+export function Icon({ name, size = 20 }: { name: "bolt" | "shield" | "devices" | "gear"; size?: number }) {
   const common = {
     width: size,
     height: size,
@@ -137,6 +172,13 @@ export function Icon({ name, size = 20 }: { name: "bolt" | "shield" | "devices";
     return (
       <svg {...common}>
         <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />
+      </svg>
+    );
+  if (name === "gear")
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="3.2" />
+        <path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M18.5 5.5l-1.9 1.9M7.4 16.6l-1.9 1.9" />
       </svg>
     );
   if (name === "shield")

@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Screen, Card as UICard, Button, Field, Input, Icon } from "@/components/ui/kit";
+import { Screen, Card as UICard, Button, Field, Input, Icon, SpadeMark } from "@/components/ui/kit";
 import { Card } from "@/components/table/Card";
 import { ChipStack } from "@/components/table/Chips";
 
@@ -66,11 +66,11 @@ export default function Landing() {
       <Screen>
         <div className="flex min-h-[80vh] flex-col justify-center gap-7">
           <motion.div className="text-center" {...rise(0)}>
-            <p className="num text-xs font-medium uppercase tracking-[0.35em] text-ink-faint">
-              Table {joinCode}
+            <p className="mono text-xs font-medium uppercase tracking-[0.3em] text-ink-faint">
+              Table · {joinCode}
             </p>
-            <h1 className="mt-3 text-4xl font-semibold tracking-tight">
-              You're invited to play
+            <h1 className="display mt-3 text-4xl">
+              You're invited <span className="display-accent">to play</span>
             </h1>
             <p className="mt-2 text-ink-dim">One name and you're seated. No signup.</p>
           </motion.div>
@@ -108,28 +108,19 @@ export default function Landing() {
             style={{ background: "var(--surface-3)", boxShadow: "inset 0 0 0 1px var(--line-hi)" }}
             {...rise(0)}
           >
-            <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--gold)" }} />
+            <span style={{ color: "var(--gold)" }}>
+              <SpadeMark size={14} />
+            </span>
             Private card room
           </motion.span>
 
           <motion.h1
-            className="text-[clamp(2.6rem,7vw,4.5rem)] font-semibold leading-[0.98] tracking-[-0.03em]"
+            className="display text-[clamp(2.7rem,7vw,4.6rem)] leading-[1.02]"
             {...rise(0.08)}
           >
             Poker that
             <br />
-            feels{" "}
-            <span
-              style={{
-                background: "linear-gradient(100deg, var(--gold-hi), var(--gold))",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-              }}
-            >
-              instant
-            </span>
-            .
+            feels <span className="display-accent">instant</span>.
           </motion.h1>
 
           <motion.p className="max-w-md text-lg leading-relaxed text-ink-dim" {...rise(0.16)}>

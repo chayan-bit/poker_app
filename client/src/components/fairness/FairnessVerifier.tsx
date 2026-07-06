@@ -44,6 +44,7 @@ export default function FairnessVerifier() {
             <Input
               placeholder="seed from the completed hand"
               value={seed}
+              className="mono text-sm"
               onChange={(e) => {
                 setSeed(e.target.value);
                 setResult(null);
@@ -54,6 +55,7 @@ export default function FairnessVerifier() {
             <Input
               placeholder="64-char hex"
               value={commitment}
+              className="mono text-sm"
               onChange={(e) => {
                 setCommitment(e.target.value);
                 setResult(null);
@@ -89,7 +91,7 @@ export default function FairnessVerifier() {
               <p className="font-semibold">
                 {result.ok ? "Verified — the deck was committed before the deal." : "Mismatch — this seed does not match the commitment."}
               </p>
-              <p className="num mt-1 break-all text-xs opacity-80">
+              <p className="mono mt-1 break-all text-xs opacity-80">
                 SHA-256(seed) = {result.computed}
               </p>
             </div>
@@ -107,7 +109,9 @@ function Back({ nav }: { nav: (n: number) => void }) {
       className="grid h-9 w-9 place-items-center rounded-lg border border-line text-ink-dim"
       aria-label="Back"
     >
-      ←
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M15 5l-7 7 7 7" />
+      </svg>
     </button>
   );
 }

@@ -168,9 +168,14 @@ function CornerIndex({
         textAnchor="middle"
         dominantBaseline="hanging"
         fontSize={w * 0.3}
-        fontWeight={800}
+        fontWeight={640}
         fill={color}
-        style={{ fontFamily: "Inter, sans-serif" }}
+        style={{
+          // Fraunces indices echo classic deck lettering; slight soft axis so
+          // small sizes don't get spiky. Falls back to Georgia offline.
+          fontFamily: "var(--font-display)",
+          fontVariationSettings: '"SOFT" 30, "WONK" 0',
+        }}
       >
         {rank}
       </text>

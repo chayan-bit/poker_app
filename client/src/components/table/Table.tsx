@@ -119,12 +119,21 @@ export default function Table() {
             </filter>
             <rect width="100%" height="100%" filter="url(#feltNoise)" />
           </svg>
-          {/* faint center brand line */}
+          {/* faint center brand monogram - printed on the felt, not typed */}
           <div
-            className="absolute left-1/2 top-[38%] -translate-x-1/2 text-[11px] font-medium uppercase tracking-[0.4em]"
-            style={{ color: "rgba(255,255,255,0.12)" }}
+            className="absolute left-1/2 top-[36%] flex -translate-x-1/2 flex-col items-center gap-1.5"
+            style={{ color: "rgba(255,255,255,0.10)" }}
           >
-            poker_app
+            <svg width={34} height={34} viewBox="0 0 48 48" fill="none" aria-hidden>
+              <circle cx="24" cy="24" r="22.5" stroke="currentColor" strokeWidth="1.5" opacity="0.7" />
+              <path
+                d="M24 10c5.2 5 11 9.6 11 15.2 0 3.4-2.4 5.6-5.3 5.6-1.7 0-3.2-.8-4.2-2.1.4 2.6 1.5 5 3.5 6.6h-10c2-1.6 3.1-4 3.5-6.6-1 1.3-2.5 2.1-4.2 2.1-2.9 0-5.3-2.2-5.3-5.6C13 19.6 18.8 15 24 10Z"
+                fill="currentColor"
+              />
+            </svg>
+            <span className="display text-[10px] uppercase" style={{ letterSpacing: "0.42em" }}>
+              Felt
+            </span>
           </div>
         </div>
 
